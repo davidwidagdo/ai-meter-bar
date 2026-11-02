@@ -3,7 +3,7 @@ import Foundation
 func testUsageStore() {
     let suite = "wifiautologin.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
     let d = UserDefaults(suiteName: suite)!
-    d.removePersistentDomain(forName: suite)
+    defer { removeTestDefaults(d, suite: suite) }
 
     var day = "2026-07-17"
     let store = UsageStore(defaults: d, dayProvider: { day })
@@ -35,7 +35,7 @@ func testUsageStore() {
     // Prune: seed 35 historical days, then history stays <= 30.
     let suite2 = "wifiautologin.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
     let d2 = UserDefaults(suiteName: suite2)!
-    d2.removePersistentDomain(forName: suite2)
+    defer { removeTestDefaults(d2, suite: suite2) }
     var recs: [[String: Any]] = []
     for i in 0..<35 {
         recs.append(["day": String(format: "2026-06-%02d", i + 1),
@@ -51,7 +51,7 @@ func testUsageStore() {
     // resetToday across a midnight boundary must NOT wipe the prior day.
     let suite3 = "wifiautologin.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
     let d3 = UserDefaults(suiteName: suite3)!
-    d3.removePersistentDomain(forName: suite3)
+    defer { removeTestDefaults(d3, suite: suite3) }
     var day3 = "2026-08-01"
     let store5 = UsageStore(defaults: d3, dayProvider: { day3 })
     store5.add(rx: 1000, tx: 500, downRate: 10, upRate: 5)

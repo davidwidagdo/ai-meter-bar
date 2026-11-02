@@ -17,3 +17,11 @@ enum T {
         exit(failures == 0 ? 0 : 1)
     }
 }
+
+// removePersistentDomain leaves an empty plist behind, so the file goes too.
+func removeTestDefaults(_ defaults: UserDefaults, suite: String) {
+    defaults.removePersistentDomain(forName: suite)
+    let plist = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Preferences/\(suite).plist")
+    try? FileManager.default.removeItem(at: plist)
+}
