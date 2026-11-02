@@ -1,6 +1,5 @@
-// Regenerates AppIcon.png (1024x1024) — a rounded-rect blue→teal gradient with a
-// white bolt, matching the menu-bar glyph. build.sh turns the PNG into the
-// bundle's AppIcon.icns.
+// Regenerates AppIcon.png (1024x1024): a rounded-rect blue-to-teal gradient with a
+// white bolt drawn as a path. build.sh turns the PNG into the bundle's AppIcon.icns.
 //
 //   swift make-appicon.swift            # writes AppIcon.png next to this file
 //   swift make-appicon.swift out.png    # custom output path
