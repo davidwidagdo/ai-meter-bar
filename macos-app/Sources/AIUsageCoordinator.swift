@@ -7,35 +7,61 @@ final class AIUsageCoordinator {
     private let queue = DispatchQueue(label: "com.davidwidagdo.aimeterbar.ai-usage", qos: .utility)
     private let cache = ClaudeUsageCache()
     private var inFlight = false
+    private var liveRequested = false
+    private var liveUsage = LiveUsage()
+    private var lastLiveCheck = Date.distantPast
+    private static let liveInterval: TimeInterval = 30
 
-    func refresh() {
-        guard !inFlight, !AppMode.isDemo else { return }
+    // Live numbers are asked for only when someone looks, so nothing polls in the background.
+    func refresh(live: Bool = false) {
+        guard !AppMode.isDemo else { return }
+        guard !inFlight else {
+            liveRequested = liveRequested || live
+            return
+        }
         inFlight = true
         queue.async { [weak self] in
             guard let self = self else { return }
-            let snapshot = Self.collect(cache: self.cache)
+            self.deliver(Self.collect(cache: self.cache, live: self.liveUsage))
+            if live, Date().timeIntervalSince(self.lastLiveCheck) >= Self.liveInterval {
+                self.lastLiveCheck = Date()
+                self.liveUsage.update()
+                self.deliver(Self.collect(cache: self.cache, live: self.liveUsage))
+            }
             DispatchQueue.main.async {
                 self.inFlight = false
-                self.onUpdate?(snapshot)
+                if self.liveRequested {
+                    self.liveRequested = false
+                    self.refresh(live: true)
+                }
             }
         }
     }
 
-    static func collect(cache: ClaudeUsageCache) -> AISnapshot {
+    private func deliver(_ snapshot: AISnapshot) {
+        DispatchQueue.main.async { self.onUpdate?(snapshot) }
+    }
+
+    static func collect(cache: ClaudeUsageCache, live: LiveUsage = LiveUsage()) -> AISnapshot {
         let running = Set(ClaudeInstances.running().map(\.folder))
         let found = ClaudeProfiles.scan()
         let usages = AccountUsage.merged(found.map { cache.read(profile: $0) })
         let profiles = zip(found, usages).map { profile, usage in
             AISnapshot.Profile(folder: profile.folder, name: profile.name, usage: usage, isRunning: running.contains(profile.folder))
         }
-        return AISnapshot(profiles: profiles, codex: CodexProvider.read(), antigravity: AntigravityProvider.read(), tools: LocalTools.read())
+        var antigravity = AntigravityProvider.read()
+        antigravity?.live = live.antigravity
+        return AISnapshot(profiles: profiles, codex: CodexReading.newest(CodexProvider.read(), live.codex),
+                          antigravity: antigravity, tools: LocalTools.read())
     }
 }
 
 enum DumpStatus {
     // Read-only check: names are masked and neither the Keychain nor the portal is touched.
     static func run() {
-        let snapshot = AIUsageCoordinator.collect(cache: ClaudeUsageCache())
+        var live = LiveUsage()
+        live.update()
+        let snapshot = AIUsageCoordinator.collect(cache: ClaudeUsageCache(), live: live)
         let now = Date()
         let profiles: [[String: Any]] = snapshot.profiles.enumerated().map { index, profile in
             let model = ProfileRowModel.make(name: "Profile \(index + 1)", usage: profile.usage, running: profile.isRunning, showLeft: true, now: now)
@@ -47,7 +73,8 @@ enum DumpStatus {
             output["codex"] = ["fiveHourLeft": model.fiveHour.text, "weekLeft": model.week.text, "detail": model.detail]
         }
         if let antigravity = snapshot.antigravity {
-            output["antigravity"] = ["lastActive": RelativeAge.short(now.timeIntervalSince(antigravity.lastActive)), "modelKnown": antigravity.model != nil]
+            let model = AntigravityRowModel.make(antigravity, showLeft: true, now: now)
+            output["antigravity"] = ["detail": model.detail, "quotas": model.quotas.map { ["name": $0.name, "left": $0.cell.text, "reset": $0.reset] }]
         }
         output["tools"] = snapshot.tools.map {
             ["name": $0.tool.displayName, "lastActive": RelativeAge.short(now.timeIntervalSince($0.lastActive)), "shown": $0.isRecent(now: now)] as [String: Any]

@@ -160,6 +160,12 @@ struct CodexReading: Equatable {
     let primary: CodexWindow?
     let secondary: CodexWindow?
     var date: Date?
+
+    static func newest(_ first: CodexReading?, _ second: CodexReading?) -> CodexReading? {
+        guard let first = first else { return second }
+        guard let second = second else { return first }
+        return (second.date ?? .distantPast) > (first.date ?? .distantPast) ? second : first
+    }
 }
 
 struct CodexRowModel: Equatable {
@@ -177,10 +183,14 @@ struct CodexRowModel: Equatable {
     }
 
     static func make(_ reading: CodexReading, showLeft: Bool, now: Date) -> CodexRowModel {
-        func cell(_ window: CodexWindow?) -> QuotaCell {
+        let age = reading.date.map { now.timeIntervalSince($0) }
+        func cell(_ window: CodexWindow?, _ freshness: Freshness) -> QuotaCell {
             guard let window = window else { return .unknown }
-            let passed = window.resetsAt.map { $0 <= now } ?? false
-            return .make(used: passed ? 0 : window.usedPercent, freshness: .fresh, showLeft: showLeft)
+            // A passed reset stays true however old the reading is, so it never expires.
+            if window.resetsAt.map({ $0 <= now }) ?? false {
+                return .make(used: 0, freshness: freshness == .fresh ? .fresh : .stale, showLeft: showLeft)
+            }
+            return .make(used: window.usedPercent, freshness: freshness, showLeft: showLeft)
         }
         let windows = columns(reading)
         var parts: [String] = []
@@ -192,13 +202,67 @@ struct CodexRowModel: Equatable {
             parts.append(elapsed == "now" ? "now" : "\(elapsed) ago")
         }
         return CodexRowModel(detail: parts.isEmpty ? "Current account" : parts.joined(separator: " · "),
-                             fiveHour: cell(windows.short), week: cell(windows.long))
+                             fiveHour: cell(windows.short, age.map(QuotaMath.fiveHourFreshness) ?? .fresh),
+                             week: cell(windows.long, age.map(QuotaMath.weekFreshness) ?? .fresh))
     }
 }
 
 struct AntigravityStatus: Equatable {
     let lastActive: Date
     let model: String?
+    var live: AntigravityLive?
+}
+
+struct AntigravityQuota: Equatable {
+    let name: String
+    let fullName: String
+    let left: Double
+    let resetsAt: Date?
+}
+
+struct AntigravityLive: Equatable {
+    let plan: String?
+    let quotas: [AntigravityQuota]
+    let date: Date
+}
+
+struct AntigravityRowModel: Equatable {
+    struct Quota: Equatable {
+        let name: String
+        let fullName: String
+        let reset: String
+        let cell: QuotaCell
+    }
+
+    let detail: String
+    let quotas: [Quota]
+
+    static func make(_ status: AntigravityStatus, showLeft: Bool, now: Date) -> AntigravityRowModel {
+        guard let live = status.live else {
+            var detail = LastActive.text(status.lastActive, now: now)
+            if let model = status.model { detail += " · \(model)" }
+            return AntigravityRowModel(detail: detail, quotas: [])
+        }
+        let elapsed = RelativeAge.short(now.timeIntervalSince(live.date))
+        let age = elapsed == "now" ? "now" : "\(elapsed) ago"
+        let freshness = QuotaMath.fiveHourFreshness(age: now.timeIntervalSince(live.date))
+        let quotas = live.quotas.map { quota -> Quota in
+            let passed = quota.resetsAt.map { $0 <= now } ?? false
+            let cell = passed
+                ? QuotaCell.make(used: 0, freshness: freshness == .fresh ? .fresh : .stale, showLeft: showLeft)
+                : QuotaCell.make(used: (1 - quota.left) * 100, freshness: freshness, showLeft: showLeft)
+            let reset = quota.resetsAt.map { passed ? "Reset" : "Resets \(RelativeAge.short($0.timeIntervalSince(now)))" } ?? ""
+            return Quota(name: quota.name, fullName: quota.fullName, reset: reset, cell: cell)
+        }
+        return AntigravityRowModel(detail: live.plan.map { "\($0) · \(age)" } ?? "Updated \(age)", quotas: quotas)
+    }
+}
+
+enum LastActive {
+    static func text(_ date: Date, now: Date) -> String {
+        let elapsed = RelativeAge.short(now.timeIntervalSince(date))
+        return "Last active \(elapsed == "now" ? "now" : "\(elapsed) ago")"
+    }
 }
 
 struct RecentSession: Equatable {
@@ -223,7 +287,7 @@ enum AITool: String, CaseIterable {
     var activityPaths: [String] {
         switch self {
         case .openCode: return [".local/share/opencode/opencode.db-wal", ".local/share/opencode/opencode.db", ".local/share/opencode/log"]
-        case .copilot:  return [".copilot/session-state", ".copilot/logs", ".copilot"]
+        case .copilot:  return [".copilot/session-state", ".copilot/logs", ".copilot/ide", ".copilot"]
         case .cursor:   return ["Library/Application Support/Cursor/User/globalStorage/state.vscdb", ".cursor"]
         }
     }
@@ -252,6 +316,16 @@ struct AISnapshot: Equatable {
     var codex: CodexReading?
     var antigravity: AntigravityStatus?
     var tools: [LocalToolStatus] = []
+
+    private static let pausedAfter: TimeInterval = 20 * 60
+
+    // Claude checks at least every 15 minutes while it polls, so an older reading means it stopped.
+    static func hasPausedProfile(_ profiles: [Profile], now: Date) -> Bool {
+        profiles.contains { profile in
+            guard profile.isRunning, case .reading(let reading) = profile.usage else { return false }
+            return now.timeIntervalSince(reading.date) >= pausedAfter
+        }
+    }
 
     // A running profile with the newest reading, else the newest reading at all.
     static func active(_ profiles: [Profile]) -> Profile? {

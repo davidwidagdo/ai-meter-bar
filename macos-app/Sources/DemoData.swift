@@ -15,8 +15,13 @@ enum DemoData {
             ],
             codex: CodexReading(primary: CodexWindow(usedPercent: 18, windowMinutes: 300, resetsAt: now.addingTimeInterval(3600)),
                                 secondary: CodexWindow(usedPercent: 41, windowMinutes: 10080, resetsAt: now.addingTimeInterval(4 * 86400)),
-                                date: now.addingTimeInterval(-720)),
-            antigravity: AntigravityStatus(lastActive: now.addingTimeInterval(-720), model: nil),
+                                date: now),
+            antigravity: AntigravityStatus(lastActive: now.addingTimeInterval(-720), model: nil, live: AntigravityLive(
+                plan: "Pro",
+                quotas: [AntigravityQuota(name: "Gemini 4", fullName: "Gemini 4", left: 0.19, resetsAt: now.addingTimeInterval(86400)),
+                         AntigravityQuota(name: "Gemini Flash", fullName: "Gemini Flash", left: 0.65, resetsAt: now.addingTimeInterval(1500)),
+                         AntigravityQuota(name: "Claude Opus +2", fullName: "Claude Opus, Claude Sonnet, GPT-OSS", left: 0, resetsAt: now.addingTimeInterval(5 * 86400))],
+                date: now)),
             tools: tools(now: now))
     }
 

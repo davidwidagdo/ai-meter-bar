@@ -462,7 +462,7 @@ extension AppDelegate: StatusPopoverDelegate {
         guard !AppMode.isDemo else { return }
         // Someone clicking the menu bar proves the Mac is awake, whatever the sleep flag says.
         if systemAsleep { wakeUp() }
-        usageCoordinator.refresh()
+        usageCoordinator.refresh(live: true)
         systemMonitor.tick()
         startMeterClock()
     }
@@ -474,7 +474,7 @@ extension AppDelegate: StatusPopoverDelegate {
 
     func popoverRefresh() {
         guard !AppMode.isDemo else { return }
-        usageCoordinator.refresh()
+        usageCoordinator.refresh(live: true)
         checkAndLogin()
     }
 
