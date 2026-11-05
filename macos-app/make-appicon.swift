@@ -1,9 +1,4 @@
-// Regenerates AppIcon.png (1024x1024): a rounded-rect blue-to-teal gradient with a
-// white bolt drawn as a path. build.sh turns the PNG into the bundle's AppIcon.icns.
-//
-//   swift make-appicon.swift            # writes AppIcon.png next to this file
-//   swift make-appicon.swift out.png    # custom output path
-//
+// Regenerates AppIcon.png (1024x1024); build.sh turns the PNG into the bundle's AppIcon.icns.
 import AppKit
 
 let size: CGFloat = 1024
@@ -15,38 +10,81 @@ guard let rep = NSBitmapImageRep(
     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
 ) else { fatalError("could not create bitmap") }
 
+func rgb(_ hex: Int) -> NSColor {
+    NSColor(srgbRed: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255,
+            blue: CGFloat(hex & 255) / 255, alpha: 1)
+}
+
+let ink = rgb(0x17181A)
+let cream = rgb(0xEFE8DA)
+let red = rgb(0xD8361E)
+let pivot = NSPoint(x: 512, y: 176)
+let arcRadius: CGFloat = 400
+
+func point(_ radius: CGFloat, _ degrees: CGFloat) -> NSPoint {
+    NSPoint(x: pivot.x + radius * cos(degrees * .pi / 180), y: pivot.y + radius * sin(degrees * .pi / 180))
+}
+
+func scaleArc(from: CGFloat, to: CGFloat, width: CGFloat, color: NSColor) {
+    let path = NSBezierPath()
+    path.appendArc(withCenter: pivot, radius: arcRadius, startAngle: from, endAngle: to, clockwise: true)
+    path.lineWidth = width
+    color.setStroke()
+    path.stroke()
+}
+
+func tick(_ degrees: CGFloat, length: CGFloat, width: CGFloat, color: NSColor) {
+    let path = NSBezierPath()
+    path.move(to: point(arcRadius, degrees))
+    path.line(to: point(arcRadius + length, degrees))
+    path.lineWidth = width
+    color.setStroke()
+    path.stroke()
+}
+
 NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
 
-let full = NSRect(x: 0, y: 0, width: size, height: size)
+// The standard macOS icon grid leaves a margin around the rounded square.
+let tile = NSBezierPath(roundedRect: NSRect(x: 100, y: 100, width: 824, height: 824), xRadius: 185, yRadius: 185)
+NSGraphicsContext.saveGraphicsState()
+let shadow = NSShadow()
+shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
+shadow.shadowBlurRadius = 22
+shadow.shadowOffset = NSSize(width: 0, height: -10)
+shadow.set()
+ink.setFill()
+tile.fill()
+NSGraphicsContext.restoreGraphicsState()
 
-// Rounded-rect (macOS squircle ratio) background with a blue -> teal gradient.
-let bg = NSBezierPath(roundedRect: full, xRadius: size * 0.2237, yRadius: size * 0.2237)
-bg.addClip()
-let gradient = NSGradient(colors: [
-    NSColor(srgbRed: 0.10, green: 0.52, blue: 0.97, alpha: 1),  // blue (top)
-    NSColor(srgbRed: 0.02, green: 0.70, blue: 0.76, alpha: 1),  // teal (bottom)
-])!
-gradient.draw(in: full, angle: -90)
+// A flat studio VU meter: paths and solid colours only, no SF Symbol or brand mark.
+let face = NSBezierPath(roundedRect: NSRect(x: 172, y: 286, width: 680, height: 452), xRadius: 58, yRadius: 58)
+cream.setFill()
+face.fill()
+face.addClip()
 
-// White lightning bolt drawn as a path: SF Symbols may not be used in app icons.
-let boltPoints: [(CGFloat, CGFloat)] = [
-    (0.58, 1.00), (0.06, 0.44), (0.40, 0.44), (0.30, 0.00), (0.84, 0.58), (0.50, 0.58),
-]
-let boltHeight = size * 0.56
-let originX = (size - boltHeight * 0.78) / 2 - boltHeight * 0.06
-let originY = (size - boltHeight) / 2
-let bolt = NSBezierPath()
-for (i, p) in boltPoints.enumerated() {
-    let point = NSPoint(x: originX + p.0 * boltHeight, y: originY + p.1 * boltHeight)
-    if i == 0 { bolt.move(to: point) } else { bolt.line(to: point) }
+let redStart: CGFloat = 67.2
+scaleArc(from: 128, to: redStart, width: 9, color: ink)
+scaleArc(from: redStart, to: 52, width: 18, color: red)
+let ticks = 11
+for index in 0..<ticks {
+    let degrees = 128 - CGFloat(index) * (76 / CGFloat(ticks - 1))
+    let major = index % 2 == 0
+    tick(degrees, length: major ? 84 : 52, width: major ? 15 : 11, color: degrees < redStart + 0.8 ? red : ink)
 }
-bolt.close()
-bolt.lineJoinStyle = .round
-bolt.lineWidth = size * 0.02
-NSColor.white.set()
-bolt.fill()
-bolt.stroke()
+
+let needleAngle: CGFloat = 78.4
+let normal = NSPoint(x: cos((needleAngle + 90) * .pi / 180), y: sin((needleAngle + 90) * .pi / 180))
+let tip = point(462, needleAngle)
+let needle = NSBezierPath()
+needle.move(to: NSPoint(x: pivot.x + normal.x * 8, y: pivot.y + normal.y * 8))
+needle.line(to: NSPoint(x: tip.x + normal.x * 3, y: tip.y + normal.y * 3))
+needle.line(to: NSPoint(x: tip.x - normal.x * 3, y: tip.y - normal.y * 3))
+needle.line(to: NSPoint(x: pivot.x - normal.x * 8, y: pivot.y - normal.y * 8))
+needle.close()
+ink.setFill()
+needle.fill()
+NSBezierPath(ovalIn: NSRect(x: 428, y: 202, width: 168, height: 168)).fill()
 
 NSGraphicsContext.restoreGraphicsState()
 guard let png = rep.representation(using: .png, properties: [:]) else { fatalError("PNG encode failed") }

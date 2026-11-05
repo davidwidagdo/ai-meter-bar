@@ -18,9 +18,10 @@ enum T {
     }
 }
 
-// removePersistentDomain leaves an empty plist behind, so the file goes too.
+// removePersistentDomain leaves an empty plist behind, and the flush must finish before it goes.
 func removeTestDefaults(_ defaults: UserDefaults, suite: String) {
     defaults.removePersistentDomain(forName: suite)
+    defaults.synchronize()
     let plist = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Preferences/\(suite).plist")
     try? FileManager.default.removeItem(at: plist)

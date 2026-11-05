@@ -1,46 +1,25 @@
 import Foundation
 
-// Drives periodic sampling: reads interface counters, computes speed via
-// SpeedMath, feeds deltas to UsageStore, and reports the latest speed to a
-// callback on the main thread. Runs continuously while the app is up so daily
-// usage stays accurate even when the menu-bar meter is hidden.
 final class SpeedMonitor {
     struct Sample { let down: Double; let up: Double }
 
     var onUpdate: ((Sample) -> Void)?
 
     private let usage: UsageStore
-    private var timer: Timer?
     private var last: (rx: UInt64, tx: UInt64)?
     private var lastTime = Date()
     private var flushAccum: TimeInterval = 0
 
     init(usage: UsageStore = .shared) { self.usage = usage }
 
-    private var interval: TimeInterval { TimeInterval(max(1, Settings.shared.speedInterval)) }
-
-    func start() {
-        stop()
+    func prepare() {
         last = nil
         lastTime = Date()
         flushAccum = 0
-        tick()   // immediate baseline sample
-        let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in self?.tick() }
-        t.tolerance = interval * 0.2
-        // .common so it keeps firing while the status menu is open.
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
+        tick()
     }
 
-    func stop() {
-        timer?.invalidate()
-        timer = nil
-    }
-
-    // Re-read interval/interface after a Settings change.
-    func restart() { start() }
-
-    private func tick() {
+    func tick() {
         let now = Date()
         let elapsed = now.timeIntervalSince(lastTime)
         lastTime = now

@@ -1,7 +1,5 @@
 import Cocoa
 
-// A window showing the last 30 days of WiFi usage: a summary header plus a table
-// (Date · ↓ · ↑ · Total) with a subtle proportional bar behind the Total column.
 final class UsageHistoryWindowController: NSWindowController, NSWindowDelegate,
                                           NSTableViewDataSource, NSTableViewDelegate {
     private let table = NSTableView()
@@ -16,7 +14,7 @@ final class UsageHistoryWindowController: NSWindowController, NSWindowDelegate,
             backing: .buffered,
             defer: false
         )
-        window.title = "WiFi Butler — Usage History"
+        window.title = "AI Meter Bar — Usage History"
         self.init(window: window)
         window.delegate = self
         window.isReleasedWhenClosed = false

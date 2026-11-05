@@ -1,5 +1,10 @@
 import Cocoa
 
+if CommandLine.arguments.contains("--dump-status") {
+    DumpStatus.run()
+    exit(0)
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

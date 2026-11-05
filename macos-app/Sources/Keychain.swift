@@ -1,11 +1,8 @@
 import Foundation
 import Security
 
-// Stores the portal password in the login Keychain. The app both writes and
-// reads the item, so no interactive access prompt is needed after the first
-// "Always Allow".
 enum Keychain {
-    static let service = "WifiAutoLogin"
+    static let service = "AIMeterBar"
     static let account = "portal"
 
     static func setPassword(_ password: String) {
@@ -14,12 +11,16 @@ enum Keychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(base as CFDictionary)
-
-        var add = base
-        add[kSecValueData as String] = Data(password.utf8)
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(add as CFDictionary, nil)
+        let data = Data(password.utf8)
+        // Updating first means a failed save cannot lose the stored password.
+        var status = SecItemUpdate(base as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = base
+            add[kSecValueData as String] = data
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            status = SecItemAdd(add as CFDictionary, nil)
+        }
+        if status != errSecSuccess { Log.write("Keychain: could not save the password (status \(status)).") }
     }
 
     // Blocks while macOS shows an authorization prompt; never call it on the main thread.

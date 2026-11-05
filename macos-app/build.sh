@@ -1,22 +1,13 @@
 #!/usr/bin/env bash
-#
-# Build WiFi Butler.app (and optionally a .dmg) using only tools that ship
-# with macOS (swiftc + hdiutil). No third-party dependencies.
-#
-# Usage:
-#   ./build.sh              build the .app and a .dmg
-#   ./build.sh --no-dmg     build the .app only (no installer)
-#   ./build.sh --install    also copy the .app into /Applications
-#   flags combine, e.g.:  ./build.sh --no-dmg --install
-#
+# Usage: ./build.sh [--no-dmg] [--install]
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-APP_NAME="WiFi Butler"
-BIN_NAME="WifiAutoLogin"
+APP_NAME="AI Meter Bar"
+BIN_NAME="AIMeterBar"
 BUILD_DIR="build"
 APP_DIR="${BUILD_DIR}/${APP_NAME}.app"
-DMG_PATH="${BUILD_DIR}/WiFi-Butler.dmg"
+DMG_PATH="${BUILD_DIR}/AI-Meter-Bar.dmg"
 
 MAKE_DMG=1
 INSTALL=0
@@ -31,8 +22,7 @@ done
 rm -rf "$BUILD_DIR"
 mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 
-# Deployment target must match LSMinimumSystemVersion in Info.plist so the
-# built binary actually runs on the OS the app claims to support.
+# Must match LSMinimumSystemVersion in Info.plist.
 DEPLOY_TARGET="arm64-apple-macosx26.0"
 
 echo "==> Compiling Swift sources (target ${DEPLOY_TARGET})"
@@ -44,8 +34,6 @@ swiftc -O \
 
 cp Info.plist "${APP_DIR}/Contents/Info.plist"
 
-# Optional custom app icon: drop a square PNG named AppIcon.png next to this
-# script and it becomes the bundle icon. Without it, the generic icon is used.
 if [ -f AppIcon.png ]; then
   echo "==> Generating app icon from AppIcon.png"
   ICONSET="${BUILD_DIR}/AppIcon.iconset"
@@ -60,9 +48,9 @@ if [ -f AppIcon.png ]; then
   rm -rf "$ICONSET"
 fi
 
-# Flat bundle (no nested code), so plain --sign is enough; --deep is deprecated.
-echo "==> Ad-hoc code signing"
-codesign --force --sign - "${APP_DIR}"
+# Set CODESIGN_IDENTITY to a stable certificate to stop Keychain and login item prompts on rebuilds.
+echo "==> Code signing with ${CODESIGN_IDENTITY:-an ad-hoc signature}"
+codesign --force --options runtime --sign "${CODESIGN_IDENTITY:--}" "${APP_DIR}"
 
 if [ "$MAKE_DMG" = 1 ]; then
   echo "==> Building .dmg"
@@ -76,11 +64,12 @@ if [ "$MAKE_DMG" = 1 ]; then
     -ov -format UDZO \
     "$DMG_PATH" >/dev/null
   rm -rf "$STAGING"
+  (cd "$BUILD_DIR" && shasum -a 256 "$(basename "$DMG_PATH")" > "$(basename "$DMG_PATH").sha256")
 fi
 
 if [ "$INSTALL" = 1 ]; then
   echo "==> Installing to /Applications"
-  # Quit any running instance so we don't replace the bundle out from under it.
+  # Quit any running copy so the bundle is not replaced out from under it.
   pkill -x "$BIN_NAME" 2>/dev/null || true
   rm -rf "/Applications/${APP_NAME}.app"
   cp -R "$APP_DIR" "/Applications/"
@@ -93,7 +82,7 @@ echo "  App: ${APP_DIR}"
 [ "$INSTALL" = 1 ]  && echo "  Installed: /Applications/${APP_NAME}.app"
 echo
 if [ "$INSTALL" = 1 ]; then
-  echo "Launch it from Launchpad/Spotlight, or: open \"/Applications/${APP_NAME}.app\""
+  echo "Launch it from Spotlight, or: open \"/Applications/${APP_NAME}.app\""
 else
   echo "Run it with: open \"${APP_DIR}\"   (or drag it wherever you like)"
 fi

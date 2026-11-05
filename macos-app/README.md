@@ -1,70 +1,32 @@
-# WiFi Butler menu-bar app
+# AI Meter Bar app
 
-A native macOS menu-bar app that keeps you logged in to a captive-portal WiFi. It has no Dock icon and lives in the
-status bar. Built with `swiftc` and `hdiutil`: no Xcode project and no third-party dependencies.
+Developer notes. See the [main README](../README.md) for what the app does.
 
-## Features
+## Run modes
 
-- **Live speed meter.** Two stacked lines in the menu bar (↑ upload on top, ↓ download below) that switch units on
-  their own (B/s, KB/s, MB/s, GB/s), with monospaced digits so the width stays steady. A bolt icon shows the state:
-  filled when connected, slashed when logged out or offline, circling arrows while logging in.
-- **Daily WiFi usage.** Today's download and upload totals in the menu, plus a **Usage History** window with the last
-  30 days, 7- and 30-day summaries and today's peak speeds. It reads the interface's own 64-bit byte counters, so the
-  totals match what the system reports.
-- **System metrics.** CPU, memory (with Activity Monitor's "used" figure and the kernel's memory-pressure level), free
-  disk space and uptime, all in the menu. Hovering **CPU** or **Memory** lists the top three apps, grouped by name so
-  a browser's helper processes collapse into one row. CPU and RAM can also show in the menu bar, sharing one column so
-  the second costs no extra width. Both are off by default.
-- **Menu.** **Login Now**, **Auto-Login**, **Start at Login**, **Show in Menu Bar** (Speed, CPU, RAM),
-  **Usage History…**, **Open Activity Monitor**, **Settings…**, **Open Log** and **Quit**.
-- **Only logs in where the portal exists.** It finds the portal's own login form on the intercepted captive page and
-  submits that, following up to three redirect pages (meta refresh or JS `location`, as MikroTik hotspots serve) to
-  reach the form. On any other WiFi, or when offline, it stays **Idle** and never posts your credentials. An optional
-  **Portal marker** (a word from the portal's login page or its address, such as the portal's domain name) also
-  requires the page to match.
-- **Settings.** Four tabs: **Login** (username and password, with rarely needed portal fallbacks behind an
-  *Advanced* toggle), **Speed Meter** (show or hide, update interval, decimal or binary units, WiFi interface),
-  **System** (metrics, CPU and RAM in the menu bar, update interval) and **General** (auto-login, start at login,
-  poll interval).
-- **Storage.** The password lives in the macOS **Keychain**, the other settings in `UserDefaults`. The log rotates
-  itself, so it never grows without bound.
-- **Triggers.** It logs in again on **polling** (portal session timeouts, where the WiFi link never drops), **network
-  reconnect** (`NWPathMonitor`, for sleep and roaming) and **wake from sleep**. After a reconnect it retries every
-  3 s, up to 4 times, while the portal is still warming up. After each login it asks the portal, then the internet
-  probe, to confirm success.
-- **Works behind a VPN.** With a Portal marker set, it talks to the portal through the Wi-Fi gateway address, so a
-  VPN that takes over DNS cannot hide the portal's name. Requests to that name go to the gateway with the name as
-  `Host`.
-- **Closes the captive-portal popup.** Once the session is confirmed it closes the macOS Captive Network Assistant, so
-  the "Join network" window no longer needs closing by hand. If login fails the popup stays, as the manual fallback.
+| Argument | What it does |
+| --- | --- |
+| `--dump-status` | Prints local AI readings as JSON with profile names masked, then exits. Touches neither the Keychain nor the portal |
+| `--demo-data` | Runs with invented data and its own preferences. Writes nothing to real settings, profiles or the Keychain |
 
-## Build
+## Source map
 
-```sh
-./build.sh
-```
+| Area | Files |
+| --- | --- |
+| Portal sign-in | `PortalClient`, `LoginForm`, `LoginOutcome`, `LoginThrottle`, `PortalDiagnostics`, `Keychain` |
+| Meters | `MeterClock`, `SpeedMonitor`, `SystemMonitor`, `UsageStore`, `UsageHistoryWindowController` |
+| AI usage | `LocalUsageReaders`, `UsageModels`, `AIUsageCoordinator` |
+| Claude profiles | `ClaudeProfiles`, `ClaudeInstances`, `ClaudeLauncher`, `Monogram`, `NewProfileWindowController` |
+| Interface | `StatusPopoverController`, `PopoverContentView`, `PopoverKit`, `MenuBarRenderer`, `SettingsWindowController` |
 
-This produces `build/WiFi Butler.app` and `build/WiFi-Butler.dmg`.
+## Behavior worth knowing
 
-## Install
-
-1. Open `build/WiFi-Butler.dmg` and drag the app to **Applications**.
-2. First launch: the app is only ad-hoc signed, so **right-click**, choose **Open**, then **Open** again to get past
-   Gatekeeper. After that it opens normally.
-3. Click the menu-bar icon, choose **Settings…**, fill in your credentials and **Save**.
-4. Turn on **Start at Login** so it runs automatically.
-
-## Notes
-
-- **Editing credentials.** Everything changes from **Settings…**; there are no config files to touch.
-- **HTTP portals.** The app allows plain-HTTP requests (`NSAllowsArbitraryLoads`) because captive portals and Apple's
-  probe use HTTP.
-- **After a rebuild or reinstall.** The ad-hoc signature changes with each build, so macOS may ask once to allow
-  Keychain access (choose **Always Allow**), and the **Start at Login** registration can be lost: toggle it again
-  from the menu.
-- **Sharing with others.** Ad-hoc signing works on your own Mac. The build targets macOS 26.0 or later on Apple
-  Silicon, required for the Liquid Glass panels in Settings and Usage History. To share it without the Gatekeeper
-  warning, sign and notarize it with an Apple Developer account; for Intel Macs, also build an `x86_64` slice and
-  `lipo` a universal binary.
-- **MikroTik CHAP portals.** If the portal hashes the password with an MD5 challenge (a `challenge` or `chap-id`
-  field, see `../discover-portal.sh`), the login needs a small extension; the app currently sends a plain POST.
+- **Sign-in results.** A login only counts as failed when the portal still asks for credentials. No evidence, or a sleep during the check, means check again.
+- **Sleep.** Automatic checks stop while the Mac sleeps, including dark wakes. Locking the screen does not stop them.
+- **After a rejection.** Automatic attempts wait 1, 5, then 15 minutes. Sign in Now and saving Settings clear the wait.
+- **Login URL.** Without one, a form goes only to the Wi-Fi gateway, and only once a Portal marker matches.
+- **Portal marker.** Use text only your portal's page shows, or its domain. A value found in the app's own addresses, such as the Apple probe URL or `<gateway>/login`, is ignored, and **Diagnose** says so. It filters honest networks and is not proof of identity.
+- **Form targets.** A form must post to the Login URL's scheme, host and port, or upgrade it to https. An unreadable target is refused.
+- **Redirects.** Followed only over http and https, and never to this Mac.
+- **VPNs.** With a Portal marker set, the app reaches the portal through the Wi-Fi gateway, so a VPN that owns DNS cannot hide its name.
+- **HTTP.** `NSAllowsArbitraryLoads` is on because portals and the connectivity probe use plain HTTP.

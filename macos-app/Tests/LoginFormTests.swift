@@ -63,10 +63,19 @@ func testLoginForm() {
     T.expect(!LoginFormParser.isSessionPage(html: login), "login page is not a session")
 
     let named = URL(string: "http://portal.example/login?dst=x")!
+    T.eq(PortalRoute.url(URL(string: "http://portal.example:8080/login")!, portalHost: "portal.example", gateway: "10.0.0.1").absoluteString,
+         "http://10.0.0.1:8080/login", "the portal's port is kept")
     T.eq(PortalRoute.url(named, portalHost: "PORTAL.example", gateway: "10.0.0.1").absoluteString,
          "http://10.0.0.1/login?dst=x", "portal name goes to the gateway")
     T.eq(PortalRoute.url(named, portalHost: "other.example", gateway: "10.0.0.1").absoluteString,
          named.absoluteString, "other hosts stay as they are")
     T.eq(PortalRoute.url(named, portalHost: "portal.example", gateway: nil).absoluteString,
          named.absoluteString, "no gateway, no rewrite")
+
+    let flood = String(repeating: "<form <meta ", count: 80_000)
+    let started = Date()
+    let huge = CaptivePage(url: nil, html: flood)
+    T.expect(huge.form == nil && !huge.isLoggedIn, "unclosed tags hold no form")
+    T.expect(LoginFormParser.redirectURL(html: flood, base: nil) == nil, "unclosed tags hold no redirect")
+    T.expect(Date().timeIntervalSince(started) < 5, "unclosed tags parse in linear time")
 }

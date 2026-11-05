@@ -1,7 +1,7 @@
 import Foundation
 
 func testUsageStore() {
-    let suite = "wifiautologin.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
+    let suite = "aimeterbar.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
     let d = UserDefaults(suiteName: suite)!
     defer { removeTestDefaults(d, suite: suite) }
 
@@ -33,7 +33,7 @@ func testUsageStore() {
     T.eq(store2.today.rx, UInt64(0), "reset today")
 
     // Prune: seed 35 historical days, then history stays <= 30.
-    let suite2 = "wifiautologin.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
+    let suite2 = "aimeterbar.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
     let d2 = UserDefaults(suiteName: suite2)!
     defer { removeTestDefaults(d2, suite: suite2) }
     var recs: [[String: Any]] = []
@@ -49,7 +49,7 @@ func testUsageStore() {
     T.expect(store3.history().count <= 30, "history pruned to 30")
 
     // resetToday across a midnight boundary must NOT wipe the prior day.
-    let suite3 = "wifiautologin.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
+    let suite3 = "aimeterbar.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
     let d3 = UserDefaults(suiteName: suite3)!
     defer { removeTestDefaults(d3, suite: suite3) }
     var day3 = "2026-08-01"
