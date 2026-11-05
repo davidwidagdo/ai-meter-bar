@@ -15,12 +15,13 @@ Developer notes. See the [main README](../README.md) for what the app does.
 | --- | --- |
 | Portal sign-in | `PortalClient`, `LoginForm`, `LoginOutcome`, `LoginThrottle`, `PortalDiagnostics`, `Keychain` |
 | Meters | `MeterClock`, `SpeedMonitor`, `SystemMonitor`, `UsageStore`, `UsageHistoryWindowController` |
-| AI usage | `LocalUsageReaders`, `UsageModels`, `AIUsageCoordinator` |
+| AI usage | `LocalUsageReaders`, `LiveUsage`, `UsageModels`, `AIUsageCoordinator` |
 | Claude profiles | `ClaudeProfiles`, `ClaudeInstances`, `ClaudeLauncher`, `Monogram`, `NewProfileWindowController` |
 | Interface | `StatusPopoverController`, `PopoverContentView`, `PopoverKit`, `ProviderMark`, `MenuBarRenderer`, `SettingsWindowController` |
 
 ## Behavior worth knowing
 
+- **Live numbers.** When the panel opens, at most every 30 seconds. Codex: runs `codex app-server` from a fixed path, asks for rate limits, and ends it. Antigravity: finds its `language_server`, takes the session value from that process's arguments, and posts to the loopback ports that process owns, with no redirects. The value is never stored or logged, and the account fields in the reply are not read.
 - **Accounts.** Each usage sample names its account. Folders on one account show its newest reading, and the account ID is never shown or logged.
 - **Move to Trash.** Settings, Accounts, the row's menu. Never Default or a running profile, and only a launcher this app built goes with it.
 - **Sign-in results. A login only counts as failed when the portal still asks for credentials. No evidence, or a sleep during the check, means check again.

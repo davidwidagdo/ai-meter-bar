@@ -122,6 +122,85 @@ enum AntigravityParser {
     }
 }
 
+enum CodexAppServerParser {
+    static let requestID = 2
+
+    static func reading(fromLine line: Data, now: Date) -> CodexReading? {
+        guard let root = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
+              (root["id"] as? NSNumber)?.intValue == requestID,
+              let limits = (root["result"] as? [String: Any])?["rateLimits"] as? [String: Any] else { return nil }
+        let primary = window(limits["primary"]), secondary = window(limits["secondary"])
+        guard primary != nil || secondary != nil else { return nil }
+        return CodexReading(primary: primary, secondary: secondary, date: now)
+    }
+
+    private static func window(_ value: Any?) -> CodexWindow? {
+        guard let object = value as? [String: Any],
+              let used = (object["usedPercent"] as? NSNumber)?.doubleValue, used.isFinite else { return nil }
+        return CodexWindow(usedPercent: used,
+                           windowMinutes: (object["windowDurationMins"] as? NSNumber)?.intValue,
+                           resetsAt: (object["resetsAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) })
+    }
+}
+
+enum AntigravityStatusParser {
+    private static let maxRows = 4
+    private static let maxText = 48
+
+    // The reply also holds the account's email and name, which are never read.
+    static func live(from data: Data, now: Date) -> AntigravityLive? {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let status = root["userStatus"] as? [String: Any] else { return nil }
+        let plan = ((status["planStatus"] as? [String: Any])?["planInfo"] as? [String: Any])?["planName"] as? String
+        let models = (status["cascadeModelConfigData"] as? [String: Any])?["clientModelConfigs"] as? [[String: Any]] ?? []
+        var groups: [(left: Double, reset: String?, names: [String])] = []
+        for model in models {
+            guard let quota = model["quotaInfo"] as? [String: Any],
+                  let name = baseName(model["label"] as? String) else { continue }
+            // This JSON leaves out zeros, so a quota with no fraction has nothing left.
+            let raw = (quota["remainingFraction"] as? NSNumber)?.doubleValue ?? 0
+            let left = raw.isFinite ? min(1, max(0, raw)) : 0
+            let reset = quota["resetTime"] as? String
+            if let index = groups.firstIndex(where: { $0.left == left && $0.reset == reset }) {
+                if !groups[index].names.contains(name) { groups[index].names.append(name) }
+            } else {
+                groups.append((left, reset, [name]))
+            }
+        }
+        let quotas = groups.prefix(maxRows).map { group in
+            AntigravityQuota(name: group.names.count > 1 ? "\(group.names[0]) +\(group.names.count - 1)" : group.names[0],
+                             fullName: group.names.joined(separator: ", "),
+                             left: group.left,
+                             resetsAt: group.reset.flatMap(date))
+        }
+        return AntigravityLive(plan: plan.map { String($0.prefix(maxText)) }, quotas: quotas, date: now)
+    }
+
+    private static func baseName(_ label: String?) -> String? {
+        guard let label = label else { return nil }
+        let base = label.replacingOccurrences(of: #"\s*\([^)]*\)\s*$"#, with: "", options: .regularExpression)
+        return base.isEmpty ? nil : String(base.prefix(maxText))
+    }
+
+    private static func date(_ text: String) -> Date? {
+        let plain = ISO8601DateFormatter()
+        if let value = plain.date(from: text) { return value }
+        plain.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return plain.date(from: text)
+    }
+}
+
+enum LoopbackPorts {
+    // Reads lsof -Fn output and keeps only ports bound to this Mac's loopback address.
+    static func parse(_ output: String) -> [Int] {
+        output.split(separator: "\n").compactMap { line in
+            guard line.hasPrefix("n127.0.0.1:"), let port = Int(line.dropFirst("n127.0.0.1:".count)),
+                  (1...65535).contains(port) else { return nil }
+            return port
+        }
+    }
+}
+
 enum LocalTools {
     static func read(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [LocalToolStatus] {
         AITool.allCases.compactMap { tool in
@@ -141,7 +220,8 @@ enum AntigravityProvider {
     static func read(root: URL = defaultRoot) -> AntigravityStatus? {
         let state = root.appendingPathComponent("antigravity_state.pbtxt")
         let locks = (try? FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("presence"), includingPropertiesForKeys: nil)) ?? []
-        let dates = ([state] + locks.filter { $0.pathExtension == "lock" }).compactMap(SafeFile.modificationDate)
+        let activity = ["conversation_summaries.db", "conversations", "brain"].map { root.appendingPathComponent($0) }
+        let dates = ([state] + activity + locks.filter { $0.pathExtension == "lock" }).compactMap(SafeFile.modificationDate)
         guard let last = dates.max() else { return nil }
         let model = SafeFile.read(state).flatMap { String(data: $0, encoding: .utf8) }.flatMap(AntigravityParser.model)
         return AntigravityStatus(lastActive: last, model: model)

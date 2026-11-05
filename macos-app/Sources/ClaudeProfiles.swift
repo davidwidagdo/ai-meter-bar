@@ -130,6 +130,23 @@ enum ClaudeProfiles {
 enum ProcessArgs {
     private static let flag = "--user-data-dir="
 
+    static func read(pid: pid_t) -> [String] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return [] }
+        return parse(Data(buffer.prefix(size)))
+    }
+
+    static func value(of flag: String, in args: [String]) -> String? {
+        for (index, arg) in args.enumerated() {
+            if arg == flag { return args.indices.contains(index + 1) ? args[index + 1] : nil }
+            if arg.hasPrefix(flag + "=") { return String(arg.dropFirst(flag.count + 1)) }
+        }
+        return nil
+    }
+
     static func userDataDir(_ args: [String]) -> String? {
         args.first { $0.hasPrefix(flag) }.map { String($0.dropFirst(flag.count)) }
     }

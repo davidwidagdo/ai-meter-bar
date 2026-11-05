@@ -17,7 +17,7 @@ struct NetworkSignature: Equatable {
 }
 
 // Portal replies are read as they come; a followed redirect would lose the hop.
-private final class NoRedirects: NSObject, URLSessionTaskDelegate {
+final class NoRedirects: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,

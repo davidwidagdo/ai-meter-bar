@@ -60,9 +60,14 @@ final class PopoverContentView: NSStackView {
     private let fiveHeader = UI.label("5h left", size: 11.5, color: .secondaryLabelColor)
     private let weekHeader = UI.label("Week left", size: 11.5, color: .secondaryLabelColor)
     private let profileRows = UI.column([], spacing: 0)
+    private lazy var pausedHint: NSStackView = {
+        let row = UI.row([UI.wrappingLabel("Claude paused its usage check. Click its menu bar icon, then Refresh.", size: 11.5, width: 320)])
+        row.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 2, right: 6)
+        return row
+    }()
     private lazy var profilesCard: CardView = {
         let header = makeProfilesHeader()
-        let column = UI.column([header, profileRows], spacing: 2)
+        let column = UI.column([header, profileRows, pausedHint], spacing: 2)
         for view in [header, profileRows] {
             view.translatesAutoresizingMaskIntoConstraints = false
             view.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
@@ -220,26 +225,42 @@ final class PopoverContentView: NSStackView {
             row.widthAnchor.constraint(equalTo: profileRows.widthAnchor).isActive = true
         }
 
+        let visible = snapshot.profiles.filter { !settings.hiddenProfiles.contains($0.folder) }
+        pausedHint.isHidden = !AISnapshot.hasPausedProfile(visible, now: now)
+
         otherRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if settings.showCodex, let codex = snapshot.codex {
             addOtherRow(makeCodexRow(codex, showLeft: showLeft, now: now))
         }
         if settings.showAntigravity, let antigravity = snapshot.antigravity {
-            var detail = lastActive(antigravity.lastActive, now: now)
-            if let model = antigravity.model { detail += " · \(model)" }
-            addOtherRow(makeActivityRow(.antigravity, name: "Antigravity", detail: detail))
+            let model = AntigravityRowModel.make(antigravity, showLeft: showLeft, now: now)
+            addOtherRow(makeActivityRow(.antigravity, name: "Antigravity", detail: model.detail))
+            for quota in model.quotas { addOtherRow(makeQuotaRow(quota, showLeft: showLeft)) }
         }
         for status in snapshot.tools where status.isRecent(now: now) && !settings.hiddenTools.contains(status.tool.rawValue) {
-            addOtherRow(makeActivityRow(status.tool.mark, name: status.tool.displayName, detail: lastActive(status.lastActive, now: now)))
+            addOtherRow(makeActivityRow(status.tool.mark, name: status.tool.displayName, detail: LastActive.text(status.lastActive, now: now)))
         }
         otherCard.isHidden = otherRows.arrangedSubviews.isEmpty
         emptyLabel.isHidden = !(profileRows.arrangedSubviews.isEmpty && otherRows.arrangedSubviews.isEmpty)
         onHeightChange?()
     }
 
-    private func lastActive(_ date: Date, now: Date) -> String {
-        let elapsed = RelativeAge.short(now.timeIntervalSince(date))
-        return "Last active \(elapsed == "now" ? "now" : "\(elapsed) ago")"
+    private func makeQuotaRow(_ quota: AntigravityRowModel.Quota, showLeft: Bool) -> NSView {
+        let name = UI.label(quota.name, size: 12)
+        name.lineBreakMode = .byTruncatingTail
+        name.toolTip = quota.fullName
+        UI.flexible(name)
+        let reset = UI.label(quota.reset, size: 10.5, color: .secondaryLabelColor)
+        reset.alignment = .right
+        UI.fix(reset, width: 66)
+        let column = QuotaColumn()
+        column.set(quota.cell, spoken: QuotaColumn.spoken(owner: "Antigravity", window: quota.fullName, cell: quota.cell, showLeft: showLeft))
+        let tileGap = NSView(), endGap = NSView()
+        UI.fix(tileGap, width: 30, height: 1)
+        UI.fix(endGap, width: 28, height: 1)
+        let row = UI.row([tileGap, name, reset, column, endGap])
+        row.edgeInsets = NSEdgeInsets(top: 3, left: 6, bottom: 3, right: 6)
+        return row
     }
 
     private func makeActivityRow(_ mark: ProviderMark, name: String, detail: String) -> NSView {

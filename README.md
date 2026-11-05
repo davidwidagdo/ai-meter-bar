@@ -14,21 +14,22 @@
 
 ## Features
 
-- **AI quota.** 5-hour and weekly quota per Claude account, whatever the profile is called, plus Codex quota. Every reading shows its age, and the menu bar marks each value with its tool.
+- **AI quota.** 5-hour and weekly quota per Claude account, whatever the profile is called, plus live Codex and Antigravity quota. Every reading shows its age, and the menu bar marks each value with its tool.
 - **Claude profiles.** Open any profile in one click, create one with its own launcher and no Automator step, or move one to the Trash.
-- **Other tools.** Antigravity, OpenCode, GitHub Copilot and Cursor appear with their marks when used in the last 30 days.
+- **Other tools.** OpenCode, GitHub Copilot and Cursor show when they were last active, and appear when used in the last 30 days.
 - **Portal sign-in.** Signs in within seconds after a network change or wake.
 - **Meters.** Speed, today's usage, 30-day history, CPU, RAM and memory pressure.
-- **Local and light.** Reads files already on this Mac, calls no AI service, and draws nothing while the screen sleeps.
+- **Light.** Live numbers are read only when you open the panel, nothing stays running for them, and nothing is drawn while the screen sleeps.
 
 ## How it works
 
-AI readings come from files other apps already keep on this Mac:
+Claude's numbers come from a file Claude keeps. Codex and Antigravity answer live when the panel opens, and their files are the fallback:
 
 ```mermaid
 flowchart LR
   A[Claude usage files] --> M[Newest reading per account] --> E[Age rules]
-  B[Codex sessions] --> E
+  P[Panel opens] --> B[Codex's own tool] --> E
+  P --> G[Antigravity's local server] --> E
   C[File dates of other tools] --> E
   E --> F[Menu bar and popover]
 ```
@@ -82,12 +83,14 @@ Click the gauge in the menu bar. For portal sign-in, open **Settings**, choose *
 ## Security
 
 - The password lives only in the Keychain, and logs never contain it, the portal address or an IP.
+- The bar holds no AI login. Codex's own tool does its own sign-in and ends right after answering, and Antigravity is asked only on this Mac's loopback address.
 - It is sent only to the Login URL's address, or to the Wi-Fi gateway once your portal marker matches. Anything else is refused.
 - Portals use plain HTTP, so sign in only on networks you trust.
 
 ## Limits
 
-- Usage is only as fresh as Claude's last save, which is why every row shows its age. Claude pauses its own check until its menu bar icon has been opened in the last 24 hours.
+- Claude's usage is only as fresh as Claude's last save, which is why every row shows its age. Claude pauses its own check when its menu bar menu has not been used for 24 hours, so use **Refresh** there.
+- Antigravity's quota needs the app to be open, and its local server is not a public interface, so an update could change it.
 - An account that reports only a weekly value shows **No 5h**.
 - Separate profiles rely on Claude's `--user-data-dir` option, which an update could change.
 - MikroTik CHAP portals are not supported. **Diagnose** tells you if a page looks like one.

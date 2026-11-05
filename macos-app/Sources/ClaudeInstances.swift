@@ -14,19 +14,10 @@ enum ClaudeInstances {
 
     static func running() -> [ClaudeInstance] {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).map { app in
-            let directory = ProcessArgs.userDataDir(arguments(pid: app.processIdentifier))
+            let directory = ProcessArgs.userDataDir(ProcessArgs.read(pid: app.processIdentifier))
             let folder = directory.map { URL(fileURLWithPath: $0).lastPathComponent } ?? ProfileNames.defaultFolder
             return ClaudeInstance(pid: app.processIdentifier, folder: folder)
         }
-    }
-
-    private static func arguments(pid: pid_t) -> [String] {
-        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
-        var size = 0
-        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
-        var buffer = [UInt8](repeating: 0, count: size)
-        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return [] }
-        return ProcessArgs.parse(Data(buffer.prefix(size)))
     }
 
     static func open(profile: ClaudeProfile, completion: @escaping (Error?) -> Void) {

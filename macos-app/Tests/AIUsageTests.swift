@@ -35,6 +35,87 @@ func testQuotaMath() {
     T.eq(RelativeAge.short(-1e300), "now", "huge negative age")
 }
 
+func testLiveParsers() {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    let good = #"{"id":2,"result":{"accountId":"x","rateLimits":{"primary":{"usedPercent":79,"windowDurationMins":300,"resetsAt":1000600},"secondary":{"usedPercent":58,"windowDurationMins":10080}}}}"#
+    let codex = CodexAppServerParser.reading(fromLine: data(good), now: now)
+    T.eq(codex?.primary?.usedPercent, 79, "codex live 5 hour")
+    T.eq(codex?.primary?.windowMinutes, 300, "codex live window")
+    T.eq(codex?.primary?.resetsAt, Date(timeIntervalSince1970: 1_000_600), "codex live reset")
+    T.eq(codex?.secondary?.usedPercent, 58, "codex live week")
+    T.eq(codex?.date, now, "a live reading is dated now")
+    T.expect(CodexAppServerParser.reading(fromLine: data(#"{"id":1,"result":{"rateLimits":{"primary":{"usedPercent":1}}}}"#), now: now) == nil, "another reply is ignored")
+    T.expect(CodexAppServerParser.reading(fromLine: data(#"{"id":2,"error":{"code":1}}"#), now: now) == nil, "an error is ignored")
+    T.expect(CodexAppServerParser.reading(fromLine: data(#"{"id":2,"result":{"rateLimits":{}}}"#), now: now) == nil, "no windows")
+    T.expect(CodexAppServerParser.reading(fromLine: data("garbage"), now: now) == nil, "garbage")
+
+    let old = CodexReading(primary: nil, secondary: nil, date: now.addingTimeInterval(-60))
+    let fresh = CodexReading(primary: nil, secondary: nil, date: now)
+    T.eq(CodexReading.newest(old, fresh), fresh, "newer reading wins")
+    T.eq(CodexReading.newest(fresh, old), fresh, "newer reading wins either way")
+    T.eq(CodexReading.newest(nil, old), old, "file only")
+    T.eq(CodexReading.newest(old, nil), old, "live only")
+
+    let status = #"""
+    {"userStatus":{"email":"dummy@example.com","name":"Dummy","planStatus":{"planInfo":{"planName":"Pro"}},"cascadeModelConfigData":{"clientModelConfigs":[
+    {"label":"Gemini 4 (High)","quotaInfo":{"remainingFraction":0.25,"resetTime":"1970-01-13T00:00:00Z"}},
+    {"label":"Gemini 4 (Low)","quotaInfo":{"remainingFraction":0.25,"resetTime":"1970-01-13T00:00:00Z"}},
+    {"label":"Flash (Low)","quotaInfo":{"remainingFraction":1.7,"resetTime":"1970-01-13T00:00:00.500Z"}},
+    {"label":"Opus (Low)","quotaInfo":{"resetTime":"1970-01-14T00:00:00Z"}},
+    {"label":"Sonnet (Low)","quotaInfo":{"resetTime":"1970-01-14T00:00:00Z"}},
+    {"label":"GPT (Low)","quotaInfo":{"resetTime":"1970-01-14T00:00:00Z"}},
+    {"label":"No quota (Low)"},
+    {"quotaInfo":{"remainingFraction":0.5}}
+    ]}}}
+    """#
+    let live = AntigravityStatusParser.live(from: data(status), now: now)
+    T.eq(live?.plan, "Pro", "antigravity plan")
+    T.eq(live?.quotas.map(\.name), ["Gemini 4", "Flash", "Opus +2"], "models with one quota are grouped")
+    T.eq(live?.quotas.map(\.left), [0.25, 1, 0], "a missing fraction is zero and a big one clamps")
+    T.eq(live?.quotas.last?.fullName, "Opus, Sonnet, GPT", "the full list stays for the tooltip")
+    T.expect(live?.quotas.first?.resetsAt != nil, "reset date parses")
+    T.expect(live?.quotas[1].resetsAt != nil, "reset date with fractions parses")
+    T.expect(AntigravityStatusParser.live(from: data(#"{"userStatus":{"cascadeModelConfigData":{"clientModelConfigs":[{"label":"A","quotaInfo":{"remainingFraction":0.5,"resetTime":"bad"}}]}}}"#), now: now)?.quotas.first?.resetsAt == nil, "a bad reset is unknown")
+    T.expect(AntigravityStatusParser.live(from: data("garbage"), now: now) == nil, "garbage status")
+    T.expect(AntigravityStatusParser.live(from: data(#"{"other":1}"#), now: now) == nil, "no user status")
+
+    T.eq(LoopbackPorts.parse("p99\nf1\nn127.0.0.1:54785\nf2\nn127.0.0.1:54786\nn*:80\nn10.0.0.2:81\nn127.0.0.1:99999\nn127.0.0.1:x\n"), [54785, 54786], "only loopback ports")
+    T.eq(ProcessArgs.value(of: "--t", in: ["a", "--t", "v", "--u=1"]), "v", "flag then value")
+    T.eq(ProcessArgs.value(of: "--u", in: ["a", "--t", "v", "--u=1"]), "1", "flag with equals")
+    T.eq(ProcessArgs.value(of: "--t", in: ["a", "--t"]), nil, "flag with no value")
+    T.eq(ProcessArgs.value(of: "--z", in: ["a"]), nil, "absent flag")
+
+    let quota = AntigravityQuota(name: "A", fullName: "A", left: 0.2, resetsAt: now.addingTimeInterval(600))
+    func model(_ age: TimeInterval, _ item: AntigravityQuota = quota) -> AntigravityRowModel {
+        AntigravityRowModel.make(AntigravityStatus(lastActive: now, model: "m", live: AntigravityLive(plan: "Pro", quotas: [item], date: now.addingTimeInterval(-age))), showLeft: true, now: now)
+    }
+    T.eq(model(0).detail, "Pro · now", "live detail")
+    T.eq(model(0).quotas.first?.cell.text, "20%", "live quota left")
+    T.eq(model(0).quotas.first?.reset, "Resets 10m", "live quota reset")
+    T.eq(model(7200).quotas.first?.cell.text, "~20%", "older live quota is marked")
+    T.eq(model(7200).detail, "Pro · 2h ago", "older live detail")
+    T.eq(model(6 * 3600).quotas.first?.cell.text, "—", "expired live quota")
+    let passed = AntigravityQuota(name: "A", fullName: "A", left: 0.2, resetsAt: now.addingTimeInterval(-60))
+    T.eq(model(0, passed).quotas.first?.cell.text, "100%", "a passed reset is full")
+    T.eq(model(0, passed).quotas.first?.reset, "Reset", "a passed reset is named")
+    T.eq(AntigravityRowModel.make(AntigravityStatus(lastActive: now.addingTimeInterval(-60), model: "m"), showLeft: true, now: now).detail, "Last active 1m ago · m", "no live numbers")
+
+    let stale = CodexReading(primary: CodexWindow(usedPercent: 5, windowMinutes: 300, resetsAt: now.addingTimeInterval(3600)),
+                             secondary: CodexWindow(usedPercent: 17, windowMinutes: 10080, resetsAt: now.addingTimeInterval(86400)),
+                             date: now.addingTimeInterval(-11 * 3600))
+    T.eq(CodexRowModel.make(stale, showLeft: true, now: now).fiveHour.text, "—", "an 11 hour old 5h value is not trusted")
+    T.eq(CodexRowModel.make(stale, showLeft: true, now: now).week.text, "83%", "a weekly value is fresh for a day")
+    let older = CodexReading(primary: stale.primary, secondary: stale.secondary, date: now.addingTimeInterval(-2 * 86400))
+    T.eq(CodexRowModel.make(older, showLeft: true, now: now).week.text, "~83%", "an older weekly value is marked")
+
+    func profile(_ running: Bool, _ age: TimeInterval) -> AISnapshot.Profile {
+        .init(folder: "F", name: "N", usage: .reading(ClaudeUsageReading(date: now.addingTimeInterval(-age), fiveHourUsed: nil, weekUsed: 1)), isRunning: running)
+    }
+    T.eq(AISnapshot.hasPausedProfile([profile(true, 3600)], now: now), true, "a running profile with an old reading is paused")
+    T.eq(AISnapshot.hasPausedProfile([profile(true, 600)], now: now), false, "a recent reading is not paused")
+    T.eq(AISnapshot.hasPausedProfile([profile(false, 3600)], now: now), false, "a closed profile is not paused")
+}
+
 func testAccountUsage() {
     func reading(_ seconds: Double, _ account: String?, week: Double) -> ClaudeUsageResult {
         .reading(ClaudeUsageReading(date: Date(timeIntervalSince1970: seconds), fiveHourUsed: nil, weekUsed: week, account: account))
