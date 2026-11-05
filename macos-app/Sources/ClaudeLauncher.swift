@@ -22,10 +22,15 @@ enum ClaudeLauncher {
     @discardableResult
     static func moveToTrash(name: String, in directory: URL = defaultDirectory,
                             trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) -> Bool {
-        let app = directory.appendingPathComponent(ProfileNames.launcherName(name))
-        guard let data = try? Data(contentsOf: app.appendingPathComponent("Contents/Info.plist")),
-              let info = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
-              info["CFBundleIdentifier"] as? String == ProfileNames.launcherIdentifier(name) else { return false }
+        let wanted = ProfileNames.launcherIdentifier(name)
+        let apps = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        // A multi-word launcher keeps its spaces while the folder has hyphens, so the identifier decides.
+        guard let app = apps.first(where: { url in
+            guard url.pathExtension == "app", url.lastPathComponent.hasPrefix("Claude - "),
+                  let data = try? Data(contentsOf: url.appendingPathComponent("Contents/Info.plist")),
+                  let info = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] else { return false }
+            return info["CFBundleIdentifier"] as? String == wanted
+        }) else { return false }
         return (try? trash(app)) != nil
     }
 

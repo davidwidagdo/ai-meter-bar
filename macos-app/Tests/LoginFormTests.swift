@@ -71,6 +71,9 @@ func testLoginForm() {
          named.absoluteString, "other hosts stay as they are")
     T.eq(PortalRoute.url(named, portalHost: "portal.example", gateway: nil).absoluteString,
          named.absoluteString, "no gateway, no rewrite")
+    let secure = URL(string: "https://portal.example/login")!
+    T.eq(PortalRoute.url(secure, portalHost: "portal.example", gateway: "10.0.0.1").absoluteString,
+         secure.absoluteString, "https stays on the portal's name")
 
     let flood = String(repeating: "<form <meta ", count: 80_000)
     let started = Date()

@@ -18,10 +18,11 @@ OUT="${SCRIPT_DIR}/portal.html"
 echo "== 1. Following captive-portal redirect from the probe =="
 redirect="$(curl -s -o /dev/null -w '%{redirect_url}' "$PROBE_URL")"
 if [[ -n "$redirect" ]]; then
-  echo "Portal redirects you to: $redirect"
+  printf 'Portal redirects you to: %s\n' "$redirect" | cat -v
   if [[ -z "$HOST" ]]; then
     HOST="${redirect#*://}"
     HOST="${HOST%%/*}"
+    [[ "$HOST" =~ ^[A-Za-z0-9.:_-]+$ ]] || HOST=""
   fi
 else
   echo "No redirect seen - you may already be logged in, or the portal uses JS/meta refresh."

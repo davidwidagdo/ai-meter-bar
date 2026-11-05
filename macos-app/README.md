@@ -27,9 +27,10 @@ Developer notes. See the [main README](../README.md) for what the app does.
 - **Sign-in results. A login only counts as failed when the portal still asks for credentials. No evidence, or a sleep during the check, means check again.
 - **Sleep.** Automatic checks stop while the Mac sleeps, including dark wakes. Locking the screen does not stop them.
 - **After a rejection.** Automatic attempts wait 1, 5, then 15 minutes. Sign in Now and saving Settings clear the wait.
-- **Login URL.** Without one, a form goes only to the Wi-Fi gateway, and only once a Portal marker matches.
+- **Login URL.** Without one, a form goes only to the Wi-Fi gateway, and only once a Portal marker matches. One that points at this Mac is refused.
 - **Portal marker.** Use text only your portal's page shows, or its domain. A value found in the app's own addresses, such as the Apple probe URL or `<gateway>/login`, is ignored, and **Diagnose** says so. It filters honest networks and is not proof of identity.
 - **Form targets.** A form must post to the Login URL's scheme, host and port, or upgrade it to https. An unreadable target is refused.
-- **Redirects.** Followed only over http and https, and never to this Mac.
-- **VPNs.** With a Portal marker set, the app reaches the portal through the Wi-Fi gateway, so a VPN that owns DNS cannot hide its name.
+- **Redirects.** Followed only over http and https. Loopback addresses are refused, but a name or LAN address that reaches this Mac is not detected.
+- **VPNs.** With a Portal marker set and an http Login URL, the app reaches the portal through the Wi-Fi gateway, so a VPN that owns DNS cannot hide its name. An https Login URL always uses the portal's own name, so TLS can check it.
+- **Saving the password.** Replaces the Keychain item, so it always has this app's own access list, and puts the old value back if the save fails.
 - **HTTP.** `NSAllowsArbitraryLoads` is on because portals and the connectivity probe use plain HTTP.

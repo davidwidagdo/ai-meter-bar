@@ -1,6 +1,6 @@
 import Foundation
 
-// Collects local usage off the main thread; never writes to or calls anything outside this Mac.
+// Collects usage off the main thread; only Codex's own tool contacts a server, and only when asked.
 final class AIUsageCoordinator {
     var onUpdate: ((AISnapshot) -> Void)?
 

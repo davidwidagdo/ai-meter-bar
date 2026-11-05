@@ -128,6 +128,10 @@ func testProfileTrash() {
     T.eq(ClaudeLauncher.moveToTrash(name: "Mine", in: apps) { moved.append($0.lastPathComponent) }, false, "another app with the name stays")
     T.eq(ClaudeLauncher.moveToTrash(name: "None", in: apps) { moved.append($0.lastPathComponent) }, false, "no launcher, nothing to move")
     T.eq(moved, ["Claude - Work.app"], "only our launcher went")
+    launcher("My Team", identifier: ProfileNames.launcherIdentifier("My Team"))
+    moved = []
+    T.eq(ClaudeLauncher.moveToTrash(name: "My-Team", in: apps) { moved.append($0.lastPathComponent) }, true, "a multi-word launcher is found from its folder name")
+    T.eq(moved, ["Claude - My Team.app"], "the multi-word launcher went")
 }
 
 func testProfileRowModel() {

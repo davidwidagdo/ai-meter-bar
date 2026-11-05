@@ -63,6 +63,10 @@ func testPostGuard() {
     T.eq(allows("https://portal.example:8443/login", p, g, false), false, "upgrade on another port")
     T.eq(allows("http://10.0.0.1/login", secure, g, true), false, "https portal never uses the gateway")
 
+    T.eq(allows("http://127.0.0.1:8765/x", "http://127.0.0.1:8765/x", g, false), false, "a portal never lives on this Mac")
+    T.eq(allows("http://[0:0:0:0:0:0:0:1]/x", "http://[0:0:0:0:0:0:0:1]/x", g, false), false, "not in another spelling either")
+    T.eq(allows("http://127.0.0.1/x", p, "127.0.0.1", true), false, "a loopback gateway is refused")
+
     T.eq(PostGuard.gatewayHolds(proven: "10.9.8.1", current: "172.16.0.1", markerSet: true), false, "network changed after the match")
     T.eq(PostGuard.gatewayHolds(proven: "10.9.8.1", current: "10.9.8.1", markerSet: true), true, "same gateway")
     T.eq(PostGuard.gatewayHolds(proven: "10.9.8.1", current: nil, markerSet: true), false, "gateway gone")
@@ -83,6 +87,18 @@ func testPostGuard() {
         ("http://0.0.0.0/", false, "any address"),
         ("http://[::1]/", false, "ipv6 loopback"),
         ("http://[::ffff:127.0.0.1]/", false, "mapped loopback"),
+        ("http://[0:0:0:0:0:0:0:1]/", false, "long ipv6 loopback"),
+        ("http://[::0001]/", false, "padded ipv6 loopback"),
+        ("http://[0::1]/", false, "short ipv6 loopback"),
+        ("http://[::0:1]/", false, "split ipv6 loopback"),
+        ("http://[0:0:0:0:0:ffff:7f00:1]/", false, "long mapped loopback"),
+        ("http://[0:0:0:0:0:ffff:127.0.0.1]/", false, "long mapped dotted loopback"),
+        ("http://[::1%25lo0]/", false, "zoned ipv6 loopback"),
+        ("http://[::]/", false, "ipv6 any address"),
+        ("http://[::127.0.0.1]/", false, "compatible ipv6 loopback"),
+        ("http://localhost./", false, "localhost trailing dot"),
+        ("http://127.0.0.1./", false, "loopback trailing dot"),
+        ("http://[2001:db8::1]/", true, "public ipv6 stays allowed"),
     ] {
         T.eq(RedirectPolicy.allows(URL(string: url)!), want, name)
     }

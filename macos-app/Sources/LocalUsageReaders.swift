@@ -49,7 +49,7 @@ enum ClaudeUsageParser {
         return .reading(ClaudeUsageReading(date: Date(timeIntervalSince1970: millis / 1000),
                                            fiveHourUsed: values.fiveHour,
                                            weekUsed: values.week,
-                                           account: sample["org"] as? String))
+                                           account: (sample["org"] as? String).flatMap { $0.isEmpty ? nil : $0 }))
     }
 
     private static func usage(in sample: [String: Any]) -> (fiveHour: Double?, week: Double?) {
@@ -118,7 +118,8 @@ enum AntigravityParser {
         guard let range = text.range(of: #"last_selected_agent_model:\s*"?([^"\n]+)"?"#, options: .regularExpression) else { return nil }
         let value = text[range].dropFirst("last_selected_agent_model:".count)
             .trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "\"")))
-        return value.isEmpty ? nil : value
+        // Antigravity writes a placeholder id here for some models, which means nothing to a person.
+        return value.isEmpty || value.hasPrefix("MODEL_PLACEHOLDER_") ? nil : value
     }
 }
 
@@ -146,6 +147,8 @@ enum CodexAppServerParser {
 enum AntigravityStatusParser {
     private static let maxRows = 4
     private static let maxText = 48
+    private static let maxModels = 64
+    private static let maxLabelBytes = 512
 
     // The reply also holds the account's email and name, which are never read.
     static func live(from data: Data, now: Date) -> AntigravityLive? {
@@ -154,7 +157,7 @@ enum AntigravityStatusParser {
         let plan = ((status["planStatus"] as? [String: Any])?["planInfo"] as? [String: Any])?["planName"] as? String
         let models = (status["cascadeModelConfigData"] as? [String: Any])?["clientModelConfigs"] as? [[String: Any]] ?? []
         var groups: [(left: Double, reset: String?, names: [String])] = []
-        for model in models {
+        for model in models.prefix(maxModels) {
             guard let quota = model["quotaInfo"] as? [String: Any],
                   let name = baseName(model["label"] as? String) else { continue }
             // This JSON leaves out zeros, so a quota with no fraction has nothing left.
@@ -178,7 +181,9 @@ enum AntigravityStatusParser {
 
     private static func baseName(_ label: String?) -> String? {
         guard let label = label else { return nil }
-        let base = label.replacingOccurrences(of: #"\s*\([^)]*\)\s*$"#, with: "", options: .regularExpression)
+        // The regex is quadratic on some text, so its input is bounded before it runs.
+        let bounded = String(decoding: label.utf8.prefix(maxLabelBytes), as: UTF8.self)
+        let base = bounded.replacingOccurrences(of: #"\s*\([^)]*\)\s*$"#, with: "", options: .regularExpression)
         return base.isEmpty ? nil : String(base.prefix(maxText))
     }
 

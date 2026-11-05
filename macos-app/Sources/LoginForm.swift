@@ -33,16 +33,18 @@ struct CaptivePage {
     let hops: Int
     let status: Int?
     let gateway: String?
+    let marker: String
     // Parsed where the page is fetched, so a hostile page cannot stall the main thread.
     let form: LoginForm?
     let isLoggedIn: Bool
 
-    init(url: URL?, html: String, hops: Int = 0, status: Int? = nil, gateway: String? = nil) {
+    init(url: URL?, html: String, hops: Int = 0, status: Int? = nil, gateway: String? = nil, marker: String = "") {
         self.url = url
         self.html = html
         self.hops = hops
         self.status = status
         self.gateway = gateway
+        self.marker = marker
         form = LoginFormParser.parse(html: html)
         isLoggedIn = LoginFormParser.isSessionPage(html: html)
     }
@@ -58,7 +60,8 @@ struct CaptivePage {
 // A VPN can own system DNS and hide the portal's name; the Wi-Fi gateway stays on-link.
 enum PortalRoute {
     static func url(_ url: URL, portalHost: String?, gateway: String?) -> URL {
-        guard let gateway = gateway, let portalHost = portalHost,
+        // TLS checks the address in the URL, so only plain http can be sent by way of the gateway.
+        guard url.scheme?.lowercased() == "http", let gateway = gateway, let portalHost = portalHost,
               url.host?.caseInsensitiveCompare(portalHost) == .orderedSame,
               let target = URL(string: "http://\(gateway)"),
               var parts = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return url }
@@ -86,13 +89,24 @@ enum RedirectPolicy {
     static func allows(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
               let host = url.host?.lowercased(), !host.isEmpty else { return false }
-        return !isLoopback(host)
+        return !LoopbackHost.matches(host)
     }
+}
 
-    private static func isLoopback(_ host: String) -> Bool {
-        if host == "localhost" || host.hasSuffix(".localhost") || host == "::1" || host.hasPrefix("::ffff:") { return true }
+// Host text only: a name that resolves to this Mac cannot be seen from here.
+enum LoopbackHost {
+    static func matches(_ host: String) -> Bool {
+        var name = host.lowercased()
+        while name.hasSuffix(".") { name.removeLast() }
+        if name == "localhost" || name.hasSuffix(".localhost") || name.contains("%") { return true }
+        var v6 = in6_addr()
+        if inet_pton(AF_INET6, name, &v6) == 1 {
+            let bytes = withUnsafeBytes(of: &v6) { Array($0) }
+            guard bytes[0..<10].allSatisfy({ $0 == 0 }) else { return false }
+            return (bytes[10] == 0xff && bytes[11] == 0xff) || (bytes[10] == 0 && bytes[11] == 0)
+        }
         var address = in_addr()
-        guard inet_aton(host, &address) != 0 else { return false }
+        guard inet_aton(name, &address) != 0 else { return false }
         let first = UInt32(bigEndian: address.s_addr) >> 24
         return first == 127 || first == 0
     }
@@ -103,7 +117,7 @@ enum PostGuard {
     // A nil target is a form nobody could read, which must not fall back to the Login URL.
     static func allows(target: URL?, portal: URL?, gateway: String?, markerSet: Bool) -> Bool {
         guard let target = target, let scheme = target.scheme?.lowercased(), scheme == "http" || scheme == "https",
-              let host = target.host?.lowercased() else { return false }
+              let host = target.host?.lowercased(), !LoopbackHost.matches(host) else { return false }
         if let portal = portal, portal.host?.lowercased() == host, sameService(target, portal) { return true }
         // TLS cannot validate on a bare gateway address, so an https portal never goes that way.
         if markerSet, host == gateway?.lowercased(), portal?.scheme?.lowercased() != "https" { return true }

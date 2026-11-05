@@ -77,6 +77,19 @@ func testLiveParsers() {
     T.expect(live?.quotas[1].resetsAt != nil, "reset date with fractions parses")
     T.expect(AntigravityStatusParser.live(from: data(#"{"userStatus":{"cascadeModelConfigData":{"clientModelConfigs":[{"label":"A","quotaInfo":{"remainingFraction":0.5,"resetTime":"bad"}}]}}}"#), now: now)?.quotas.first?.resetsAt == nil, "a bad reset is unknown")
     T.expect(AntigravityStatusParser.live(from: data("garbage"), now: now) == nil, "garbage status")
+    func reply(_ labels: [String]) -> Data {
+        let models = labels.map { ["label": $0, "quotaInfo": ["remainingFraction": 0.5]] as [String: Any] }
+        return (try? JSONSerialization.data(withJSONObject: ["userStatus": ["cascadeModelConfigData": ["clientModelConfigs": models]]])) ?? Data()
+    }
+    var started = Date()
+    let spaces = AntigravityStatusParser.live(from: reply([String(repeating: " ", count: 64_000) + "x"]), now: now)
+    let brackets = AntigravityStatusParser.live(from: reply([String(repeating: "(", count: 64_000)]), now: now)
+    T.expect(Date().timeIntervalSince(started) < 1, "a long label parses quickly")
+    T.expect((spaces?.quotas.first?.name.count ?? 99) <= 48 && (brackets?.quotas.first?.name.count ?? 99) <= 48, "a long label is capped")
+    started = Date()
+    let many = AntigravityStatusParser.live(from: reply(Array(repeating: String(repeating: " ", count: 511), count: 7000)), now: now)
+    T.expect(Date().timeIntervalSince(started) < 3, "many long labels parse quickly")
+    T.expect(many != nil, "many long labels still parse")
     T.expect(AntigravityStatusParser.live(from: data(#"{"other":1}"#), now: now) == nil, "no user status")
 
     T.eq(LoopbackPorts.parse("p99\nf1\nn127.0.0.1:54785\nf2\nn127.0.0.1:54786\nn*:80\nn10.0.0.2:81\nn127.0.0.1:99999\nn127.0.0.1:x\n"), [54785, 54786], "only loopback ports")
@@ -175,6 +188,10 @@ func testClaudeUsageParser() {
         T.eq(r.weekUsed, nil, "only empty samples have no value")
     } else { T.expect(false, "only empty samples parse") }
 
+    if case .reading(let r) = ClaudeUsageParser.parse(data(#"{"samples":[{"t":1000,"org":"","u":{"sd":1}}]}"#)) {
+        T.eq(r.account, nil, "an empty account is no account")
+    } else { T.expect(false, "empty account parses") }
+
     T.eq(ClaudeUsageParser.parse(data(#"{"samples":[]}"#)), .noData, "empty samples")
     T.eq(ClaudeUsageParser.parse(data(#"[1,2]"#)), .unreadable, "array root is a format change")
     T.eq(ClaudeUsageParser.parse(data(#"{"other":1}"#)), .unreadable, "no samples key")
@@ -233,6 +250,7 @@ func testAntigravityParser() {
     T.eq(AntigravityParser.model(from: "x: 1\nlast_selected_agent_model: MODEL_ONE\ny: 2\n"), "MODEL_ONE", "bare value")
     T.eq(AntigravityParser.model(from: #"last_selected_agent_model: "Model Two""#), "Model Two", "quoted value")
     T.eq(AntigravityParser.model(from: "nothing here"), nil, "absent")
+    T.eq(AntigravityParser.model(from: "last_selected_agent_model: MODEL_PLACEHOLDER_M1"), nil, "an internal id is not shown")
 }
 
 func testSessionParser() {
