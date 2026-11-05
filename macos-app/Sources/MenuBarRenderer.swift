@@ -1,18 +1,16 @@
 import Cocoa
 
-// Renders the menu-bar content as a single template image: a status icon plus N
-// text columns. Each column is 1–2 stacked 9pt rows of (label, value); values
-// share a sub-column so digits line up. Template = true so macOS tints it for
-// light/dark automatically. Formatting is the caller's job.
+// One template image holds the icon and all columns, so macOS tints it for the menu bar.
 enum MenuBarRenderer {
     enum State {
-        case connected, working, disconnected
+        case normal, lowQuota, needsLogin, working
 
         var symbol: String {
             switch self {
-            case .connected:    return "bolt.fill"
-            case .working:      return "arrow.triangle.2.circlepath"
-            case .disconnected: return "bolt.slash.fill"
+            case .normal:     return "gauge.with.dots.needle.67percent"
+            case .lowQuota:   return "exclamationmark.triangle.fill"
+            case .needsLogin: return "bolt.slash.fill"
+            case .working:    return "arrow.triangle.2.circlepath"
             }
         }
     }
@@ -24,14 +22,12 @@ enum MenuBarRenderer {
         }
 
         let rows: [Row]
-        // Widest value this column will ever show (e.g. "100%"). Reserves width so
-        // the status item — and every item left of it — doesn't shift each sample.
+        // Reserves the widest value, so items in the menu bar do not shift with each sample.
         var valueSample = ""
     }
 
     private static let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
-    // Template images use only the alpha channel, so the fill colour is irrelevant
-    // — but it must be fully opaque. Don't "fix" this to labelColor.
+    // Template images use only alpha, so this must stay fully opaque; do not use labelColor.
     private static let attrs: [NSAttributedString.Key: Any] =
         [.font: font, .foregroundColor: NSColor.black]
 
@@ -52,9 +48,7 @@ enum MenuBarRenderer {
             return img
         }
 
-        // One shared line height from FONT metrics, not per-string metrics: "↓" may
-        // come from a fallback font with a taller line box, which would push one
-        // column's baselines out of step with another's.
+        // Font metrics, not string metrics: an arrow's fallback font would shift the baselines.
         let lineH = min(ceil(font.ascender - font.descender + font.leading), floor(barH / 2))
 
         let iconGap: CGFloat = 3, labelGap: CGFloat = 3, colGap: CGFloat = 7

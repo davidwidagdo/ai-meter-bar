@@ -3,3 +3,4 @@ config
 portal.html
 macos-app/build/
 .DS_Store
+.claude/

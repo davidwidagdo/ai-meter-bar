@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 #
-# One-time helper: inspect the captive portal's login form so you can fill in
-# LOGIN_URL and EXTRA_FIELDS in `config`.
-#
-# Run it while connected to the WiFi but logged OUT of the portal.
-#
+# Shows the captive portal's login form. Run it on the WiFi while logged out of the portal.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,22 +44,21 @@ fi
 
 echo
 echo "== 3. Form actions found =="
-grep -oiE '<form[^>]*action="[^"]*"[^>]*>' "$OUT" || echo "(none - open $OUT manually)"
+{ grep -oiE '<form[^>]*action="[^"]*"[^>]*>' "$OUT" || echo "(none - open $OUT manually)"; } | cat -v
 
 echo
 echo "== 4. Input / hidden fields found =="
-grep -oiE '<input[^>]*name="[^"]*"[^>]*>' "$OUT" || echo "(none found)"
+{ grep -oiE '<input[^>]*name="[^"]*"[^>]*>' "$OUT" || echo "(none found)"; } | cat -v
 
 echo
 if grep -qiE 'name="(challenge|chap-id|chap-challenge)"' "$OUT"; then
   echo "!! This looks like a MikroTik CHAP (MD5 challenge) portal."
   echo "   The password must be hashed as md5(chap-id + password + challenge)."
-  echo "   Report this so do_login() can be extended for CHAP."
+  echo "   The app does not support this yet."
 else
   echo "Looks like a plain POST login (username/password sent directly)."
 fi
 
 echo
-echo "Next: set LOGIN_URL (the form action, as an absolute URL) and any hidden"
-echo "fields as EXTRA_FIELDS in $CONFIG_FILE, then run:"
-echo "  ./wifi-autologin.sh --once"
+echo "Next: open the app's Settings, choose Portal, and set Login URL to the form action"
+echo "as an absolute URL. Hidden fields go in the advanced Extra form fields."

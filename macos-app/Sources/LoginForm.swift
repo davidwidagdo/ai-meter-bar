@@ -11,8 +11,7 @@ struct LoginForm {
     let action: String   // raw action attribute (may be relative or empty)
     var fields: [FormField]
 
-    // Fills the password field(s) and the first visible text field (the
-    // username), leaving hidden fields (tokens, dst, popup, …) untouched.
+    // Hidden fields (tokens, dst, popup) stay as the portal sent them.
     func filled(username: String, password: String) -> [(String, String)] {
         var result = fields
         for i in result.indices where result[i].type == "password" {
@@ -25,6 +24,37 @@ struct LoginForm {
     }
 }
 
+// Fetched once and reused for the gating decision and the login submit.
+struct CaptivePage {
+    static let maxBytes = 1_000_000
+
+    let url: URL?
+    let html: String
+    let hops: Int
+    let status: Int?
+    let gateway: String?
+    // Parsed where the page is fetched, so a hostile page cannot stall the main thread.
+    let form: LoginForm?
+    let isLoggedIn: Bool
+
+    init(url: URL?, html: String, hops: Int = 0, status: Int? = nil, gateway: String? = nil) {
+        self.url = url
+        self.html = html
+        self.hops = hops
+        self.status = status
+        self.gateway = gateway
+        form = LoginFormParser.parse(html: html)
+        isLoggedIn = LoginFormParser.isSessionPage(html: html)
+    }
+
+    // Logged on rejection: shape only, never the page body, host or path, which can name a site.
+    func summary(hostKind: String) -> String {
+        let depth = max(0, (url?.pathComponents.count ?? 1) - 1)
+        return "path depth \(depth), \(html.utf8.count) bytes, \(form == nil ? "no form" : "form"), "
+            + "\(hops) redirect(s) followed, host=\(hostKind)"
+    }
+}
+
 // A VPN can own system DNS and hide the portal's name; the Wi-Fi gateway stays on-link.
 enum PortalRoute {
     static func url(_ url: URL, portalHost: String?, gateway: String?) -> URL {
@@ -33,19 +63,83 @@ enum PortalRoute {
               let target = URL(string: "http://\(gateway)"),
               var parts = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return url }
         parts.host = target.host
-        parts.port = target.port
         return parts.url ?? url
     }
 }
 
-// Minimal, dependency-free HTML form parser for standard captive portals.
-// Not a full HTML parser: it handles the plain `<form>`/`<input>` markup these
-// portals use. JS-rendered or CHAP-challenge portals won't be discovered and
-// fall back to the manually configured endpoint.
+// Filters honest networks only: whoever answers chooses the page, so it is not proof.
+enum PortalMarker {
+    // The app chose these addresses and portals echo them, so a match on them proves nothing.
+    static func isUsable(_ marker: String, ownAddresses: [String]) -> Bool {
+        !ownAddresses.contains { $0.localizedCaseInsensitiveContains(marker) }
+    }
+
+    static func matches(page: CaptivePage, marker: String, ownAddresses: [String]) -> Bool {
+        guard isUsable(marker, ownAddresses: ownAddresses) else { return false }
+        let host = page.hops > 0 ? (page.url?.host ?? "") : ""
+        return host.localizedCaseInsensitiveContains(marker) || page.html.localizedCaseInsensitiveContains(marker)
+    }
+}
+
+// A page chooses these targets, so local files and this Mac's services stay out of reach.
+enum RedirectPolicy {
+    static func allows(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = url.host?.lowercased(), !host.isEmpty else { return false }
+        return !isLoopback(host)
+    }
+
+    private static func isLoopback(_ host: String) -> Bool {
+        if host == "localhost" || host.hasSuffix(".localhost") || host == "::1" || host.hasPrefix("::ffff:") { return true }
+        var address = in_addr()
+        guard inet_aton(host, &address) != 0 else { return false }
+        let first = UInt32(bigEndian: address.s_addr) >> 24
+        return first == 127 || first == 0
+    }
+}
+
+// Credentials go only to the configured portal, or to the gateway once a marker matched there.
+enum PostGuard {
+    // A nil target is a form nobody could read, which must not fall back to the Login URL.
+    static func allows(target: URL?, portal: URL?, gateway: String?, markerSet: Bool) -> Bool {
+        guard let target = target, let scheme = target.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = target.host?.lowercased() else { return false }
+        if let portal = portal, portal.host?.lowercased() == host, sameService(target, portal) { return true }
+        // TLS cannot validate on a bare gateway address, so an https portal never goes that way.
+        if markerSet, host == gateway?.lowercased(), portal?.scheme?.lowercased() != "https" { return true }
+        return false
+    }
+
+    // A page may upgrade the configured portal to https, but never drop TLS or change the port.
+    private static func sameService(_ target: URL, _ portal: URL) -> Bool {
+        let scheme = target.scheme?.lowercased(), configured = portal.scheme?.lowercased()
+        if scheme == configured { return port(of: target) == port(of: portal) }
+        return configured == "http" && scheme == "https" && target.port == nil
+    }
+
+    private static func port(of url: URL) -> Int {
+        url.port ?? (url.scheme?.lowercased() == "https" ? 443 : 80)
+    }
+
+    // A Keychain prompt can outlast a Wi-Fi change, and the marker matched only on the old gateway.
+    static func gatewayHolds(proven: String?, current: String?, markerSet: Bool) -> Bool {
+        !markerSet || proven == current
+    }
+
+    static func hostKind(_ url: URL?, portalHost: String?, gateway: String?) -> String {
+        guard let host = url?.host?.lowercased() else { return "other" }
+        if host == portalHost?.lowercased() { return "portal" }
+        if host == gateway?.lowercased() { return "gateway" }
+        return "other"
+    }
+}
+
+// Handles plain form markup only; JS-rendered portals fall back to the configured Login URL.
 enum LoginFormParser {
     // Returns the first <form> that contains a password input.
     static func parse(html: String) -> LoginForm? {
-        for form in regexMatches("(?is)<form\\b.*?</form>", html) {
+        guard let closed = upToLast("</form>", in: html) else { return nil }
+        for form in regexMatches("(?is)<form\\b.*?</form>", closed) {
             let inputs = parseInputs(form)
             guard inputs.contains(where: { $0.type == "password" }) else { continue }
             let openTag = regexMatches("(?is)<form\\b[^>]*>", form).first ?? ""
@@ -68,8 +162,13 @@ enum LoginFormParser {
         return URL(string: raw, relativeTo: base)?.absoluteURL
     }
 
+    // An opener with no closer rescans to the end, which is quadratic on a hostile page.
+    private static func upToLast(_ closer: String, in html: String) -> String? {
+        html.range(of: closer, options: [.caseInsensitive, .backwards]).map { String(html[..<$0.upperBound]) }
+    }
+
     private static func metaRefreshTarget(_ html: String) -> String? {
-        for tag in regexMatches("(?is)<meta\\b[^>]*>", html) {
+        for tag in regexMatches("(?is)<meta\\b[^>]*>", upToLast(">", in: html) ?? "") {
             guard attribute("http-equiv", in: tag)?.lowercased() == "refresh",
                   let content = attribute("content", in: tag),
                   let url = firstCapture("(?i)url\\s*=\\s*['\"]?([^'\"]+)", content) else { continue }

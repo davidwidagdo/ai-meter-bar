@@ -9,17 +9,29 @@ swiftc -o "$OUT" \
   Sources/UsageStore.swift \
   Sources/CPUMath.swift \
   Sources/MemoryMath.swift \
-  Sources/ProcessMath.swift \
-  Sources/DiskMath.swift \
   Sources/SystemFormat.swift \
   Sources/LoginForm.swift \
+  Sources/AppMode.swift \
+  Sources/LoginOutcome.swift \
+  Sources/PortalDiagnostics.swift \
+  Tests/PortalDiagnosticsTests.swift \
+  Sources/LoginThrottle.swift \
+  Tests/LoginOutcomeTests.swift \
+  Sources/UsageModels.swift \
+  Sources/LocalUsageReaders.swift \
+  Sources/ClaudeProfiles.swift \
+  Sources/ClaudeLauncher.swift \
+  Sources/DemoData.swift \
+  Tests/AIUsageTests.swift \
+  Tests/ClaudeProfilesTests.swift \
+  Sources/MeterClock.swift \
+  Tests/MeterClockTests.swift \
   Tests/TestSupport.swift \
   Tests/ByteFormatterTests.swift \
   Tests/SpeedMathTests.swift \
   Tests/UsageStoreTests.swift \
   Tests/CPUMathTests.swift \
   Tests/MemoryMathTests.swift \
-  Tests/ProcessMathTests.swift \
   Tests/SystemFormatTests.swift \
   Tests/LoginFormTests.swift \
   Tests/main.swift

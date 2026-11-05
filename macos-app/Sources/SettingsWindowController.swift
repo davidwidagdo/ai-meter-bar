@@ -1,10 +1,33 @@
 import Cocoa
 
-// Tabbed settings: Login | Speed Meter | General. Booleans are checkboxes.
-// Password is written to the Keychain; the rest to UserDefaults. Start-at-Login
-// is toggled via callbacks so the SMAppService logic stays in AppDelegate.
-final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
-    // Login tab
+private final class MenuAction: NSMenuItem {
+    private var handler: (() -> Void)?
+
+    convenience init(_ title: String, handler: @escaping () -> Void) {
+        self.init(title: title, action: #selector(fire), keyEquivalent: "")
+        self.handler = handler
+        target = self
+    }
+
+    @objc private func fire() {
+        handler?()
+    }
+}
+
+// The password loads only on the Portal tab, so opening Settings costs no Keychain prompt.
+final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDelegate {
+    // Accounts tab
+    private let unitControl = NSSegmentedControl(labels: ["% Left", "% Used"], trackingMode: .selectOne, target: nil, action: nil)
+    private let profileRows = UI.column([], spacing: 4)
+    private var profileSwitches: [String: NSSwitch] = [:]
+    private let codexSwitch = NSSwitch()
+    private let antigravitySwitch = NSSwitch()
+
+    // Portal tab
+    private let tabView = NSTabView()
+    private let portalTabIdentifier = "portal"
+    private let autoLoginCheck = NSButton(checkboxWithTitle: "Auto-Login", target: nil, action: nil)
+    private let pollField = NSTextField()
     private let loginURLField = NSTextField()
     private let usernameField = NSTextField()
     private let passwordField = NSSecureTextField()
@@ -12,44 +35,38 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let revealButton = NSButton()
     private var passwordRevealed = false
     private var passwordEdited = false
+    private var passwordLoaded = false
     private let extraField = NSTextField()
     private let markerField = NSTextField()
     private let advancedToggle = NSButton(checkboxWithTitle: "Show advanced portal options (rarely needed)", target: nil, action: nil)
     private var advancedBox = NSView()
+    private let diagnoseResult = UI.wrappingLabel("", width: 520)
     private var baseContentHeight: CGFloat = 0
-
-    // Speed Meter tab
-    private let showSpeedCheck = NSButton(checkboxWithTitle: "Show speed meter in menu bar", target: nil, action: nil)
-    private let intervalPopup = NSPopUpButton()
-    private let binaryCheck = NSButton(checkboxWithTitle: "Use binary units (1024 / KiB)", target: nil, action: nil)
-    private let interfacePopup = NSPopUpButton()
-
-    // System tab
-    private let showSystemCheck = NSButton(checkboxWithTitle: "Show system metrics in the menu", target: nil, action: nil)
-    private let showCPUCheck = NSButton(checkboxWithTitle: "Show CPU in menu bar", target: nil, action: nil)
-    private let showRAMCheck = NSButton(checkboxWithTitle: "Show RAM in menu bar", target: nil, action: nil)
-    private let systemIntervalPopup = NSPopUpButton()
+    private var isMeasuringTabs = false
 
     // General tab
-    private let autoLoginCheck = NSButton(checkboxWithTitle: "Auto-Login", target: nil, action: nil)
+    private let modePopup = NSPopUpButton()
+    private let intervalPopup = NSPopUpButton()
+    private let systemIntervalPopup = NSPopUpButton()
+    private let binaryCheck = NSButton(checkboxWithTitle: "Use binary units (1024 / KiB)", target: nil, action: nil)
+    private let interfacePopup = NSPopUpButton()
     private let startAtLoginCheck = NSButton(checkboxWithTitle: "Start at Login", target: nil, action: nil)
-    private let pollField = NSTextField()
 
     // Wiring back to AppDelegate.
     var onSave: (() -> Void)?
     var isLoginItemEnabled: () -> Bool = { false }
     var setLoginItem: (Bool) -> Void = { _ in }
+    var onNewProfile: (() -> Void)?
+    var onProfilesChanged: (() -> Void)?
+    var onOpenUsageHistory: (() -> Void)?
+    var runDiagnostics: ((@escaping ([String]) -> Void) -> Void)?
 
     private let intervalOptions = Settings.intervalOptions
+    private let modes = MenuBarMode.allCases
 
     convenience init() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 430),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "WiFi Butler — Settings"
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = "AI Meter Bar — Settings"
         self.init(window: window)
         window.delegate = self
         window.isReleasedWhenClosed = false
@@ -67,12 +84,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private func buildUI() {
         guard let content = window?.contentView else { return }
 
-        let tabView = NSTabView()
+        tabView.delegate = self
         tabView.translatesAutoresizingMaskIntoConstraints = false
-        tabView.addTabViewItem(tab("Login", view: buildLoginTab()))
-        tabView.addTabViewItem(tab("Speed Meter", view: buildSpeedTab()))
-        tabView.addTabViewItem(tab("System", view: buildSystemTab()))
-        tabView.addTabViewItem(tab("General", view: buildGeneralTab()))
+        tabView.addTabViewItem(tab("Accounts", identifier: "accounts", view: buildAccountsTab()))
+        tabView.addTabViewItem(tab("Portal", identifier: portalTabIdentifier, view: buildPortalTab()))
+        tabView.addTabViewItem(tab("General", identifier: "general", view: buildGeneralTab()))
 
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
         cancelButton.keyEquivalent = "\u{1b}"
@@ -95,21 +111,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             actionBar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
             actionBar.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -14),
         ])
-
-        sizeWindowToTallestTab(tabView)
     }
 
     // NSTabView lays out only the selected tab, so measure every tab or taller ones clip.
-    private func sizeWindowToTallestTab(_ tabView: NSTabView) {
+    private func sizeWindowToTallestTab() {
         guard let content = window?.contentView else { return }
         let selected = tabView.selectedTabViewItem
         var tallest: CGFloat = 0
+        // Selecting the Portal tab just to measure it must not read the Keychain.
+        isMeasuringTabs = true
         for item in tabView.tabViewItems {
             tabView.selectTabViewItem(item)
             content.layoutSubtreeIfNeeded()
             tallest = max(tallest, content.fittingSize.height)
         }
         if let selected = selected { tabView.selectTabViewItem(selected) }
+        isMeasuringTabs = false
         guard tallest > 0 else { return }
         baseContentHeight = tallest
         window?.setContentSize(NSSize(width: content.frame.width, height: tallest))
@@ -124,8 +141,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         window?.setContentSize(NSSize(width: content.frame.width, height: height))
     }
 
-    private func tab(_ title: String, view: NSView) -> NSTabViewItem {
-        let item = NSTabViewItem()
+    private func tab(_ title: String, identifier: String, view: NSView) -> NSTabViewItem {
+        let item = NSTabViewItem(identifier: identifier)
         item.label = title
         let container = NSView()
         container.addSubview(view)
@@ -149,7 +166,142 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         return g
     }
 
-    private func buildLoginTab() -> NSView {
+    private func buildAccountsTab() -> NSView {
+        let title = UI.label("Claude Profiles", size: 15, weight: .semibold)
+        unitControl.setAccessibilityLabel("Show usage as")
+        let add = ClosureButton(title: "New Profile") { [weak self] in self?.onNewProfile?() }
+        let header = UI.row([title, UI.spacer(), unitControl, add])
+        UI.fix(header, width: 560)
+
+        let profiles = CardView(profileRows, padding: 8)
+        UI.fix(profiles, width: 560)
+        let note = UI.label("Hiding a profile never deletes its folder or sign-in.", size: 12, color: .secondaryLabelColor)
+
+        let others = UI.label("Other Tools", size: 15, weight: .semibold)
+        codexSwitch.setAccessibilityLabel("Show Codex in the bar")
+        antigravitySwitch.setAccessibilityLabel("Show Antigravity in the bar")
+        let tools = CardView(UI.column([
+            toolRow("Cx", "Codex", "Current account, read from local sessions", codexSwitch),
+            toolRow("Ag", "Antigravity", "Last active time only", antigravitySwitch),
+        ], spacing: 4), padding: 8)
+        UI.fix(tools, width: 560)
+
+        return UI.column([header, profiles, note, others, tools], spacing: 12)
+    }
+
+    private func toolRow(_ letter: String, _ name: String, _ detail: String, _ toggle: NSSwitch) -> NSView {
+        let names = UI.column([UI.label(name, weight: .semibold), UI.label(detail, size: 11.5, color: .secondaryLabelColor)], spacing: 1)
+        let row = UI.row([TileView(letter: letter, hex: ProfileTint.all[5].hex), names, UI.spacer(), toggle], spacing: 12)
+        UI.fix(row, width: 544)
+        return row
+    }
+
+    private func rebuildProfiles() {
+        profileRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        profileSwitches.removeAll()
+        let settings = Settings.shared
+        let cache = ClaudeUsageCache()
+        for profile in ClaudeProfiles.listed() {
+            let name = settings.alias(forFolder: profile.folder) ?? profile.name
+            let names = UI.column([UI.label(name, weight: .semibold), UI.label(profile.folder, size: 11.5, color: .secondaryLabelColor, mono: true)], spacing: 1)
+            UI.flexible(names)
+
+            let toggle = NSSwitch()
+            toggle.state = settings.hiddenProfiles.contains(profile.folder) ? .off : .on
+            toggle.setAccessibilityLabel("Show \(name) in the bar")
+            profileSwitches[profile.folder] = toggle
+
+            var age = "No usage yet"
+            if case .reading(let reading) = cache.read(profile: profile) {
+                age = "\(RelativeAge.short(Date().timeIntervalSince(reading.date))) ago"
+            }
+            let ageLabel = UI.label(age, size: 12, color: .secondaryLabelColor)
+            UI.fix(ageLabel, width: 78)
+
+            let launcher = launcherCell(profile)
+            UI.fix(launcher, width: 124)
+
+            let more = ClosureButton(symbol: "ellipsis.circle", label: "More for \(name)")
+            more.onClick = { [weak self, weak more] in
+                guard let self = self, let more = more else { return }
+                self.profileMenu(profile, name: name).popUp(positioning: nil, at: NSPoint(x: 0, y: more.bounds.height + 4), in: more)
+            }
+
+            let row = UI.row([TileView(letter: Monogram.letter(for: name), hex: settings.tint(forFolder: profile.folder)), names, launcher, ageLabel, toggle, more], spacing: 12)
+            UI.fix(row, width: 544)
+            profileRows.addArrangedSubview(row)
+        }
+    }
+
+    private func launcherCell(_ profile: ClaudeProfile) -> NSView {
+        if profile.folder == ProfileNames.defaultFolder {
+            return UI.label("Opens with Claude", size: 12, color: .secondaryLabelColor)
+        }
+        if AppMode.isDemo || ClaudeLauncher.exists(name: profile.name) {
+            return UI.label("Launcher ready", size: 12, weight: .medium, color: UI.ok)
+        }
+        guard ProfileNames.canHaveLauncher(profile) else {
+            return UI.label("Name not supported", size: 12, color: .secondaryLabelColor)
+        }
+        let button = ClosureButton(title: "Create Launcher")
+        button.controlSize = .small
+        button.onClick = { [weak self] in self?.createLauncher(profile) }
+        return button
+    }
+
+    private func createLauncher(_ profile: ClaudeProfile) {
+        let hex = Settings.shared.tint(forFolder: profile.folder)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result {
+                try Monogram.withIcon(letter: Monogram.letter(for: profile.name), hex: hex) { icon in
+                    try ClaudeLauncher.build(name: profile.name, icon: icon)
+                }
+            }
+            DispatchQueue.main.async {
+                if case .failure = result { Log.write("Launcher could not be created.") }
+                self?.rebuildProfiles()
+            }
+        }
+    }
+
+    private func profileMenu(_ profile: ClaudeProfile, name: String) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(MenuAction("Rename…") { [weak self] in self?.rename(profile, current: name) })
+        let colors = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
+        let colorMenu = NSMenu()
+        for tint in ProfileTint.all {
+            colorMenu.addItem(MenuAction(tint.name) { [weak self] in
+                Settings.shared.setTint(tint.hex, forFolder: profile.folder)
+                self?.profilesChanged()
+            })
+        }
+        colors.submenu = colorMenu
+        menu.addItem(colors)
+        menu.addItem(MenuAction("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([profile.url]) })
+        return menu
+    }
+
+    private func rename(_ profile: ClaudeProfile, current: String) {
+        let alert = NSAlert()
+        alert.messageText = "Rename \(current)"
+        alert.informativeText = "This changes the name shown here. The folder stays the same."
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: current)
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let value = field.stringValue.trimmingCharacters(in: .whitespaces)
+        Settings.shared.setAlias(value.isEmpty || value == profile.name ? nil : value, forFolder: profile.folder)
+        profilesChanged()
+    }
+
+    private func profilesChanged() {
+        rebuildProfiles()
+        onProfilesChanged?()
+    }
+
+    private func buildPortalTab() -> NSView {
         let fields = [loginURLField, usernameField, extraField, markerField]
         for field in fields {
             field.translatesAutoresizingMaskIntoConstraints = false
@@ -158,30 +310,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         usernameField.placeholderString = "username"
         loginURLField.placeholderString = "http://<portal-host>/login"
         extraField.placeholderString = "e.g. dst=, popup=true"
-        markerField.placeholderString = "e.g. hotspot"
+        markerField.placeholderString = "text only your portal's page shows"
+        pollField.translatesAutoresizingMaskIntoConstraints = false
+        pollField.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        pollField.placeholderString = "15"
 
-        // Primary — the only fields a normal user needs.
         let primary = grid([
+            [NSGridCell.emptyContentView, autoLoginCheck],
             [label("Username:"), usernameField],
             [label("Password:"), passwordCell()],
+            [label("Login URL:"), loginURLField],
+            [label("Check every (s):"), pollField],
         ])
 
-        // Advanced — fallback fields, collapsed by default so the tab isn't
-        // cluttered. The app auto-detects and fills the portal's own login form,
-        // so these are only used when that fails (e.g. a JS-rendered portal).
+        let note = UI.wrappingLabel("Credentials are sent only to the Login URL's host, or to the Wi-Fi gateway once the Portal marker matches.", width: 520)
+
         advancedToggle.target = self
         advancedToggle.action = #selector(toggleAdvanced)
         advancedToggle.translatesAutoresizingMaskIntoConstraints = false
 
-        let caption = NSTextField(wrappingLabelWithString:
-            "Only used if the portal's login form can't be detected automatically — normally you can leave these alone.")
-        caption.font = NSFont.systemFont(ofSize: 11)
-        caption.textColor = .secondaryLabelColor
-        caption.translatesAutoresizingMaskIntoConstraints = false
-        caption.widthAnchor.constraint(equalToConstant: 420).isActive = true
-
+        let caption = UI.wrappingLabel("Extra fields apply only when the page has no login form the app can read.", width: 520)
         let advancedGrid = grid([
-            [label("Login URL:"), loginURLField],
             [label("Extra form fields:"), extraField],
             [label("Portal marker:"), markerField],
         ])
@@ -194,7 +343,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         advancedStack.isHidden = true
         advancedBox = advancedStack
 
-        let column = NSStackView(views: [primary, advancedToggle, advancedStack])
+        let diagnose = ClosureButton(title: "Diagnose") { [weak self] in self?.diagnose() }
+        diagnose.toolTip = "Checks the portal without sending anything"
+        diagnoseResult.isHidden = true
+
+        let column = NSStackView(views: [primary, note, advancedToggle, advancedStack, diagnose, diagnoseResult])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 14
@@ -207,56 +360,44 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         fitWindowToCurrentContent()
     }
 
-    private func buildSpeedTab() -> NSView {
-        intervalPopup.translatesAutoresizingMaskIntoConstraints = false
-        intervalPopup.removeAllItems()
-        intervalPopup.addItems(withTitles: ["1 second", "2 seconds", "5 seconds"])
-
-        interfacePopup.translatesAutoresizingMaskIntoConstraints = false
-        rebuildInterfacePopup()
-
-        return grid([
-            [NSGridCell.emptyContentView, showSpeedCheck],
-            [label("Update interval:"), intervalPopup],
-            [NSGridCell.emptyContentView, binaryCheck],
-            [label("Wi-Fi interface:"), interfacePopup],
-        ])
-    }
-
-    private func buildSystemTab() -> NSView {
-        systemIntervalPopup.translatesAutoresizingMaskIntoConstraints = false
-        systemIntervalPopup.removeAllItems()
-        systemIntervalPopup.addItems(withTitles: ["1 second", "2 seconds", "5 seconds"])
-
-        let note = NSTextField(wrappingLabelWithString:
-            "CPU and RAM always appear in the menu — tick these only to also show them in the menu bar itself.")
-        note.font = NSFont.systemFont(ofSize: 11)
-        note.textColor = .secondaryLabelColor
-        note.translatesAutoresizingMaskIntoConstraints = false
-        // Stays inside the 500pt window once the grid's label column is subtracted.
-        note.widthAnchor.constraint(equalToConstant: 300).isActive = true
-
-        return grid([
-            [NSGridCell.emptyContentView, showSystemCheck],
-            [NSGridCell.emptyContentView, showCPUCheck],
-            [NSGridCell.emptyContentView, showRAMCheck],
-            [label("Update interval:"), systemIntervalPopup],
-            [NSGridCell.emptyContentView, note],
-        ])
+    private func diagnose() {
+        diagnoseResult.stringValue = "Checking…"
+        diagnoseResult.isHidden = false
+        fitWindowToCurrentContent()
+        runDiagnostics? { [weak self] lines in
+            DispatchQueue.main.async {
+                self?.diagnoseResult.stringValue = lines.joined(separator: "\n")
+                self?.fitWindowToCurrentContent()
+            }
+        }
     }
 
     private func buildGeneralTab() -> NSView {
-        pollField.translatesAutoresizingMaskIntoConstraints = false
-        pollField.widthAnchor.constraint(equalToConstant: 80).isActive = true
-        pollField.placeholderString = "15"
+        for popup in [modePopup, intervalPopup, systemIntervalPopup, interfacePopup] {
+            popup.translatesAutoresizingMaskIntoConstraints = false
+        }
+        modePopup.removeAllItems()
+        modePopup.addItems(withTitles: modes.map(\.title))
+        for popup in [intervalPopup, systemIntervalPopup] {
+            popup.removeAllItems()
+            popup.addItems(withTitles: ["1 second", "2 seconds", "5 seconds"])
+        }
+        rebuildInterfacePopup()
 
-        let resetButton = NSButton(title: "Reset today's usage", target: self, action: #selector(resetUsage))
+        let resetButton = NSButton(title: "Reset Today's Usage", target: self, action: #selector(resetUsage))
+        let history = ClosureButton(title: "Usage History") { [weak self] in self?.onOpenUsageHistory?() }
+        let logButton = ClosureButton(title: "Open Log") {
+            if !AppMode.isDemo { NSWorkspace.shared.open(Log.fileURL) }
+        }
 
         return grid([
-            [NSGridCell.emptyContentView, autoLoginCheck],
+            [label("Menu bar shows:"), modePopup],
+            [label("Speed interval:"), intervalPopup],
+            [label("CPU and RAM interval:"), systemIntervalPopup],
+            [NSGridCell.emptyContentView, binaryCheck],
+            [label("Wi-Fi interface:"), interfacePopup],
             [NSGridCell.emptyContentView, startAtLoginCheck],
-            [label("Login check interval (s):"), pollField],
-            [NSGridCell.emptyContentView, resetButton],
+            [NSGridCell.emptyContentView, UI.row([resetButton, history, logButton], spacing: 8)],
         ])
     }
 
@@ -270,7 +411,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
     }
 
-    // MARK: - Password reveal (unchanged behavior)
+    // MARK: - Password reveal
 
     private func passwordCell() -> NSView {
         passwordPlainField.isHidden = true
@@ -278,7 +419,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         holder.translatesAutoresizingMaskIntoConstraints = false
         for field in [passwordField, passwordPlainField] as [NSTextField] {
             field.translatesAutoresizingMaskIntoConstraints = false
-            field.delegate = self          // marks the password as user-edited
+            field.delegate = self
             holder.addSubview(field)
             NSLayoutConstraint.activate([
                 field.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
@@ -295,7 +436,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         revealButton.setButtonType(.momentaryChange)
         revealButton.target = self
         revealButton.action = #selector(togglePasswordReveal)
-        revealButton.toolTip = "Show/hide password"
+        revealButton.toolTip = "Show or hide password"
         revealButton.translatesAutoresizingMaskIntoConstraints = false
         revealButton.widthAnchor.constraint(equalToConstant: 22).isActive = true
 
@@ -329,7 +470,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         passwordRevealed ? passwordPlainField.stringValue : passwordField.stringValue
     }
 
+    func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        guard tabViewItem?.identifier as? String == portalTabIdentifier, !isMeasuringTabs else { return }
+        loadPasswordAsync()
+    }
+
     private func loadPasswordAsync() {
+        guard !passwordLoaded else { return }
+        passwordLoaded = true
         passwordEdited = false
         passwordField.stringValue = ""
         passwordPlainField.stringValue = ""
@@ -340,8 +488,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.passwordField.placeholderString = nil
-                // The user may have typed while the Keychain was busy; never overwrite that.
-                guard !self.passwordEdited else { return }
+                // The user may have typed meanwhile, or closed the window, which must stay clear.
+                guard self.passwordLoaded, !self.passwordEdited else { return }
                 if self.passwordRevealed {
                     self.passwordPlainField.stringValue = stored
                 } else {
@@ -355,80 +503,89 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     private func load() {
         let s = Settings.shared
+        unitControl.selectedSegment = s.usageShowLeft ? 0 : 1
+        rebuildProfiles()
+        codexSwitch.state = s.showCodex ? .on : .off
+        antigravitySwitch.state = s.showAntigravity ? .on : .off
+
+        autoLoginCheck.state = s.autoLoginEnabled ? .on : .off
+        pollField.stringValue = String(s.pollInterval)
         loginURLField.stringValue = s.loginURL
         usernameField.stringValue = s.username
         extraField.stringValue = s.extraFields.replacingOccurrences(of: "\n", with: ", ")
         markerField.stringValue = s.portalMarker
-        pollField.stringValue = String(s.pollInterval)
         advancedToggle.state = .off
         advancedBox.isHidden = true
-        fitWindowToCurrentContent()
+        diagnoseResult.isHidden = true
 
         passwordRevealed = false
+        passwordLoaded = false
         passwordField.isHidden = false
         passwordPlainField.isHidden = true
         revealButton.image = eyeImage(revealed: false)
-        loadPasswordAsync()
 
-        showSpeedCheck.state = s.showSpeedMeter ? .on : .off
-        binaryCheck.state = s.useBinaryUnits ? .on : .off
-        intervalPopup.selectItem(at: intervalOptions.firstIndex(of: s.speedInterval) ?? 0)
-
-        showSystemCheck.state = s.showSystemStats ? .on : .off
-        showCPUCheck.state = s.showCPUMeter ? .on : .off
-        showRAMCheck.state = s.showRAMMeter ? .on : .off
+        modePopup.selectItem(at: modes.firstIndex(of: s.menuBarMode) ?? 0)
+        intervalPopup.selectItem(at: intervalOptions.firstIndex(of: s.speedInterval) ?? 1)
         systemIntervalPopup.selectItem(at: intervalOptions.firstIndex(of: s.systemInterval) ?? 1)
-
+        binaryCheck.state = s.useBinaryUnits ? .on : .off
         rebuildInterfacePopup()
         let override = s.wifiInterfaceOverride
         let idx = (0..<interfacePopup.numberOfItems).first {
             (interfacePopup.item(at: $0)?.representedObject as? String) == override
         }
         interfacePopup.selectItem(at: idx ?? 0)
-
-        autoLoginCheck.state = s.autoLoginEnabled ? .on : .off
         startAtLoginCheck.state = isLoginItemEnabled() ? .on : .off
+
+        sizeWindowToTallestTab()
+        if tabView.selectedTabViewItem?.identifier as? String == portalTabIdentifier { loadPasswordAsync() }
     }
 
     @objc private func save() {
-        // Clicking Save with the mouse doesn't end editing on the focused field,
-        // so commit the field editor first — otherwise the last typed-but-uncommitted
-        // edit would be read as its previous value.
+        // Clicking Save with the mouse doesn't end editing on the focused field, so commit it first.
         window?.makeFirstResponder(nil)
 
         let s = Settings.shared
+        s.usageShowLeft = unitControl.selectedSegment == 0
+        s.hiddenProfiles = Set(profileSwitches.filter { $0.value.state == .off }.keys)
+        s.showCodex = codexSwitch.state == .on
+        s.showAntigravity = antigravitySwitch.state == .on
+
+        s.autoLoginEnabled = autoLoginCheck.state == .on
+        s.pollInterval = Int(pollField.stringValue) ?? 15
         s.loginURL = loginURLField.stringValue.trimmingCharacters(in: .whitespaces)
         s.username = usernameField.stringValue.trimmingCharacters(in: .whitespaces)
-        // Write only an edited password (empty may mean mid-load), synchronously for onSave.
-        if passwordEdited {
-            s.password = enteredPassword
-        }
+        let newPassword = passwordEdited ? enteredPassword : nil
         s.extraFields = extraField.stringValue
             .split(whereSeparator: { $0 == "," || $0 == "\n" })
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
         s.portalMarker = markerField.stringValue.trimmingCharacters(in: .whitespaces)
-        s.pollInterval = Int(pollField.stringValue) ?? 15
 
-        s.showSpeedMeter = showSpeedCheck.state == .on
-        s.useBinaryUnits = binaryCheck.state == .on
-        s.speedInterval = intervalOptions[safe: intervalPopup.indexOfSelectedItem] ?? 1
-        s.wifiInterfaceOverride = (interfacePopup.selectedItem?.representedObject as? String) ?? ""
-
-        s.showSystemStats = showSystemCheck.state == .on
-        s.showCPUMeter = showCPUCheck.state == .on
-        s.showRAMMeter = showRAMCheck.state == .on
+        s.menuBarMode = modes[safe: modePopup.indexOfSelectedItem] ?? s.menuBarMode
+        s.speedInterval = intervalOptions[safe: intervalPopup.indexOfSelectedItem] ?? 2
         s.systemInterval = intervalOptions[safe: systemIntervalPopup.indexOfSelectedItem] ?? 2
-
-        s.autoLoginEnabled = autoLoginCheck.state == .on
+        s.useBinaryUnits = binaryCheck.state == .on
+        s.wifiInterfaceOverride = (interfacePopup.selectedItem?.representedObject as? String) ?? ""
         setLoginItem(startAtLoginCheck.state == .on)
 
-        onSave?()
-        window?.close()
+        // A Keychain prompt blocks its caller, so the write stays off the main thread.
+        let finish = { [weak self] in
+            self?.onSave?()
+            self?.window?.close()
+        }
+        guard let password = newPassword else {
+            finish()
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            Settings.shared.password = password
+            DispatchQueue.main.async(execute: finish)
+        }
     }
 
     @objc private func resetUsage() {
+        guard !AppMode.isDemo else { return }
         UsageStore.shared.resetToday()
     }
 
@@ -436,20 +593,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         window?.close()
     }
 
-    // This controller is held for the process's lifetime and the window is never
-    // released, so anything left in a field stays in the heap for days. Drop the
-    // plaintext password on close; present() reloads it from the Keychain anyway.
     func controlTextDidChange(_ notification: Notification) {
         guard let field = notification.object as? NSTextField,
               field === passwordField || field === passwordPlainField else { return }
         passwordEdited = true
     }
 
+    // This window lives for days, so the plaintext password must not stay in its fields after closing.
     func windowWillClose(_ notification: Notification) {
         passwordField.stringValue = ""
         passwordPlainField.stringValue = ""
         passwordEdited = false
         passwordRevealed = false
+        passwordLoaded = false
         passwordField.isHidden = false
         passwordPlainField.isHidden = true
         revealButton.image = eyeImage(revealed: false)
@@ -460,6 +616,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         NSApp.activate(ignoringOtherApps: true)
         window?.center()
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    func refreshProfiles() {
+        guard window?.isVisible == true else { return }
+        rebuildProfiles()
     }
 }
 
