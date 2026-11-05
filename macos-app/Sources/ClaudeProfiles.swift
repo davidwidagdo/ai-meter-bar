@@ -60,6 +60,10 @@ enum ProfileCreateError: Error, Equatable {
     case invalidName, exists, failed
 }
 
+enum ProfileTrashError: Error, Equatable {
+    case protected, running, failed
+}
+
 enum ClaudeProfiles {
     static var supportRoot: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -79,6 +83,20 @@ enum ClaudeProfiles {
             throw ProfileCreateError.failed
         }
         return ClaudeProfile(folder: folder, name: trimmed, url: url)
+    }
+
+    // The Trash, never a permanent delete: this folder holds the profile's sign-in and local chats.
+    static func moveToTrash(_ profile: ClaudeProfile, running: Set<String>, root: URL = supportRoot,
+                            trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) throws {
+        guard !AppMode.isDemo, profile.folder != ProfileNames.defaultFolder, !profile.folder.contains("/"),
+              ProfileNames.displayName(folder: profile.folder) != nil,
+              profile.url.standardizedFileURL.path == root.appendingPathComponent(profile.folder).standardizedFileURL.path else {
+            throw ProfileTrashError.protected
+        }
+        guard !running.contains(profile.folder) else { throw ProfileTrashError.running }
+        let values = try? profile.url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values?.isDirectory == true, values?.isSymbolicLink != true else { throw ProfileTrashError.failed }
+        do { try trash(profile.url) } catch { throw ProfileTrashError.failed }
     }
 
     static func listed() -> [ClaudeProfile] {

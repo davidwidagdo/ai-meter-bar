@@ -35,6 +35,40 @@ func testQuotaMath() {
     T.eq(RelativeAge.short(-1e300), "now", "huge negative age")
 }
 
+func testAccountUsage() {
+    func reading(_ seconds: Double, _ account: String?, week: Double) -> ClaudeUsageResult {
+        .reading(ClaudeUsageReading(date: Date(timeIntervalSince1970: seconds), fiveHourUsed: nil, weekUsed: week, account: account))
+    }
+    let merged = AccountUsage.merged([reading(100, "a", week: 1), reading(300, "a", week: 3), reading(200, "b", week: 2),
+                                      reading(50, nil, week: 9), .noData, .unreadable, reading(10, nil, week: 8)])
+    T.eq(merged[0], reading(300, "a", week: 3), "older folder takes the account's newest reading")
+    T.eq(merged[1], reading(300, "a", week: 3), "newest folder keeps its reading")
+    T.eq(merged[2], reading(200, "b", week: 2), "another account is untouched")
+    T.eq(merged[3], reading(50, nil, week: 9), "no account stays on its own")
+    T.eq(merged[4], .noData, "no data stays")
+    T.eq(merged[5], .unreadable, "unreadable stays")
+    T.eq(merged[6], reading(10, nil, week: 8), "readings with no account never merge")
+}
+
+func testLocalTools() {
+    let fm = FileManager.default
+    let home = fm.temporaryDirectory.appendingPathComponent("ai-meter-tools-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: home) }
+    T.eq(LocalTools.read(home: home), [], "no tools on this Mac")
+    let db = home.appendingPathComponent(".local/share/opencode/opencode.db")
+    try? fm.createDirectory(at: db.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try? Data().write(to: db)
+    let when = Date(timeIntervalSince1970: 1_000_000)
+    try? fm.setAttributes([.modificationDate: when], ofItemAtPath: db.path)
+    try? fm.setAttributes([.modificationDate: when], ofItemAtPath: db.deletingLastPathComponent().appendingPathComponent("log").path)
+    let found = LocalTools.read(home: home)
+    T.eq(found.map(\.tool), [.openCode], "a tool appears only when found")
+    T.eq(found.first?.lastActive, when, "last active is the file date")
+    let status = LocalToolStatus(tool: .openCode, lastActive: when)
+    T.eq(status.isRecent(now: when.addingTimeInterval(29 * 86400)), true, "used within 30 days")
+    T.eq(status.isRecent(now: when.addingTimeInterval(31 * 86400)), false, "unused for over 30 days")
+}
+
 func testClaudeUsageParser() {
     let good = #"{"version":2,"samples":[{"t":1000,"org":"a","u":{"fh":10,"sd":20}},{"t":2000,"org":"a","u":{"fh":38,"sd":43}}]}"#
     if case .reading(let r) = ClaudeUsageParser.parse(data(good)) {
@@ -47,6 +81,18 @@ func testClaudeUsageParser() {
         T.eq(r.fiveHourUsed, nil, "fh is optional")
         T.eq(r.weekUsed, 12, "sd read without fh")
     } else { T.expect(false, "missing fh still parses") }
+
+    let mixed = #"{"samples":[{"t":1000,"org":"a","u":{"fh":5,"sd":6}},{"t":2000,"org":"b","u":{"sd":7}},{"t":3000,"org":"c","u":{}}]}"#
+    if case .reading(let r) = ClaudeUsageParser.parse(data(mixed)) {
+        T.eq(r.date, Date(timeIntervalSince1970: 2), "empty sample is skipped")
+        T.eq(r.account, "b", "account comes from the same sample")
+        T.eq(r.fiveHourUsed, nil, "a weekly-only sample has no 5h")
+        T.eq(r.weekUsed, 7, "weekly-only value")
+    } else { T.expect(false, "mixed samples parse") }
+    if case .reading(let r) = ClaudeUsageParser.parse(data(#"{"samples":[{"t":4000,"u":{}}]}"#)) {
+        T.eq(r.date, Date(timeIntervalSince1970: 4), "only empty samples keep the last date")
+        T.eq(r.weekUsed, nil, "only empty samples have no value")
+    } else { T.expect(false, "only empty samples parse") }
 
     T.eq(ClaudeUsageParser.parse(data(#"{"samples":[]}"#)), .noData, "empty samples")
     T.eq(ClaudeUsageParser.parse(data(#"[1,2]"#)), .unreadable, "array root is a format change")

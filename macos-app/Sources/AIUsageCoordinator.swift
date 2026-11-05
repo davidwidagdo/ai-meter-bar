@@ -23,10 +23,12 @@ final class AIUsageCoordinator {
 
     static func collect(cache: ClaudeUsageCache) -> AISnapshot {
         let running = Set(ClaudeInstances.running().map(\.folder))
-        let profiles = ClaudeProfiles.scan().map {
-            AISnapshot.Profile(folder: $0.folder, name: $0.name, usage: cache.read(profile: $0), isRunning: running.contains($0.folder))
+        let found = ClaudeProfiles.scan()
+        let usages = AccountUsage.merged(found.map { cache.read(profile: $0) })
+        let profiles = zip(found, usages).map { profile, usage in
+            AISnapshot.Profile(folder: profile.folder, name: profile.name, usage: usage, isRunning: running.contains(profile.folder))
         }
-        return AISnapshot(profiles: profiles, codex: CodexProvider.read(), antigravity: AntigravityProvider.read())
+        return AISnapshot(profiles: profiles, codex: CodexProvider.read(), antigravity: AntigravityProvider.read(), tools: LocalTools.read())
     }
 }
 
@@ -46,6 +48,9 @@ enum DumpStatus {
         }
         if let antigravity = snapshot.antigravity {
             output["antigravity"] = ["lastActive": RelativeAge.short(now.timeIntervalSince(antigravity.lastActive)), "modelKnown": antigravity.model != nil]
+        }
+        output["tools"] = snapshot.tools.map {
+            ["name": $0.tool.displayName, "lastActive": RelativeAge.short(now.timeIntervalSince($0.lastActive)), "shown": $0.isRecent(now: now)] as [String: Any]
         }
         guard let data = try? JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys]) else { return }
         print(String(decoding: data, as: UTF8.self))

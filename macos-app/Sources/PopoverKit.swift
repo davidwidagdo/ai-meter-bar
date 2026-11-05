@@ -190,12 +190,14 @@ final class QuotaColumn: NSStackView {
         case .critical: value.textColor = UI.critical
         }
         meter.cell = cell
+        meter.isHidden = cell.hidesMeter
         setAccessibilityElement(true)
         setAccessibilityRole(.levelIndicator)
         setAccessibilityLabel(spoken)
     }
 
     static func spoken(owner: String, window: String, cell: QuotaCell, showLeft: Bool) -> String {
+        if cell.hidesMeter { return "\(owner), \(window), not reported" }
         guard !cell.isUnknown else { return "\(owner), \(window), unknown" }
         let number = cell.text.replacingOccurrences(of: "~", with: "about ").replacingOccurrences(of: "%", with: " percent")
         return "\(owner), \(window), \(number) \(showLeft ? "left" : "used")"
@@ -231,6 +233,14 @@ final class TileView: NSImageView {
     init(letter: String, hex: String, size: CGFloat = 30) {
         super.init(frame: .zero)
         image = Monogram.image(letter: letter, hex: hex, size: size)
+        imageScaling = .scaleNone
+        setAccessibilityElement(false)
+        UI.fix(self, width: size, height: size)
+    }
+
+    init(mark: ProviderMark, size: CGFloat = 30) {
+        super.init(frame: .zero)
+        image = mark.tile(size: size)
         imageScaling = .scaleNone
         setAccessibilityElement(false)
         UI.fix(self, width: size, height: size)

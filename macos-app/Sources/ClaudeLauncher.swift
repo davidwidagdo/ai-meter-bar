@@ -18,6 +18,17 @@ enum ClaudeLauncher {
         FileManager.default.fileExists(atPath: directory.appendingPathComponent(ProfileNames.launcherName(name)).path)
     }
 
+    // Only a launcher this app built goes; another app with the same name stays.
+    @discardableResult
+    static func moveToTrash(name: String, in directory: URL = defaultDirectory,
+                            trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) -> Bool {
+        let app = directory.appendingPathComponent(ProfileNames.launcherName(name))
+        guard let data = try? Data(contentsOf: app.appendingPathComponent("Contents/Info.plist")),
+              let info = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
+              info["CFBundleIdentifier"] as? String == ProfileNames.launcherIdentifier(name) else { return false }
+        return (try? trash(app)) != nil
+    }
+
     static func build(name: String, icon: URL? = nil, into directory: URL = defaultDirectory) throws -> URL {
         guard !AppMode.isDemo, ProfileNames.isValid(name) else { throw LauncherError.invalidName }
         let fm = FileManager.default

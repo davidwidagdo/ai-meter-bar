@@ -19,6 +19,7 @@ enum MenuBarRenderer {
         struct Row {
             let label: String
             let value: String
+            var mark: ProviderMark?
         }
 
         let rows: [Row]
@@ -30,6 +31,8 @@ enum MenuBarRenderer {
     // Template images use only alpha, so this must stay fully opaque; do not use labelColor.
     private static let attrs: [NSAttributedString.Key: Any] =
         [.font: font, .foregroundColor: NSColor.black]
+
+    private static let markSize: CGFloat = 10
 
     private static func width(_ s: String) -> CGFloat {
         s.isEmpty ? 0 : ceil(NSAttributedString(string: s, attributes: attrs).size().width)
@@ -52,7 +55,7 @@ enum MenuBarRenderer {
         let lineH = min(ceil(font.ascender - font.descender + font.leading), floor(barH / 2))
 
         let iconGap: CGFloat = 3, labelGap: CGFloat = 3, colGap: CGFloat = 7
-        let labelW = columns.map { col in col.rows.map { width($0.label) }.max() ?? 0 }
+        let labelW = columns.map { col in col.rows.map { $0.mark == nil ? width($0.label) : markSize }.max() ?? 0 }
         let valueW = columns.map { col in
             max(width(col.valueSample), col.rows.map { width($0.value) }.max() ?? 0)
         }
@@ -77,7 +80,10 @@ enum MenuBarRenderer {
             let valueX = x + labelW[i] + (labelW[i] > 0 ? labelGap : 0)
             for (r, row) in col.rows.enumerated() {
                 let y = base + blockH - CGFloat(r + 1) * lineH
-                if !row.label.isEmpty {
+                if let mark = row.mark?.template {
+                    mark.draw(in: NSRect(x: x, y: y + (lineH - markSize) / 2, width: markSize, height: markSize),
+                              from: .zero, operation: .sourceOver, fraction: 1)
+                } else if !row.label.isEmpty {
                     NSAttributedString(string: row.label, attributes: attrs)
                         .draw(at: NSPoint(x: x, y: y))
                 }

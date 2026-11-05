@@ -14,8 +14,9 @@
 
 ## Features
 
-- **AI quota.** 5-hour and weekly quota per Claude desktop profile, Codex quota, and Antigravity's last activity. Every reading shows its age.
-- **Claude profiles.** Open any profile in one click, or create one with its own launcher and no Automator step.
+- **AI quota.** 5-hour and weekly quota per Claude account, whatever the profile is called, plus Codex quota. Every reading shows its age, and the menu bar marks each value with its tool.
+- **Claude profiles.** Open any profile in one click, create one with its own launcher and no Automator step, or move one to the Trash.
+- **Other tools.** Antigravity, OpenCode, GitHub Copilot and Cursor appear with their marks when used in the last 30 days.
 - **Portal sign-in.** Signs in within seconds after a network change or wake.
 - **Meters.** Speed, today's usage, 30-day history, CPU, RAM and memory pressure.
 - **Local and light.** Reads files already on this Mac, calls no AI service, and draws nothing while the screen sleeps.
@@ -26,10 +27,10 @@ AI readings come from files other apps already keep on this Mac:
 
 ```mermaid
 flowchart LR
-  A[Claude usage files] --> D[Read-only parsers]
-  B[Codex sessions] --> D
-  C[Antigravity state] --> D
-  D --> E[Age rules] --> F[Menu bar and popover]
+  A[Claude usage files] --> M[Newest reading per account] --> E[Age rules]
+  B[Codex sessions] --> E
+  C[File dates of other tools] --> E
+  E --> F[Menu bar and popover]
 ```
 
 Portal sign-in sends the password only after every check passes:
@@ -86,12 +87,17 @@ Click the gauge in the menu bar. For portal sign-in, open **Settings**, choose *
 
 ## Limits
 
-- Usage is only as fresh as Claude's last save, which is why every row shows its age.
+- Usage is only as fresh as Claude's last save, which is why every row shows its age. Claude pauses its own check until its menu bar icon has been opened in the last 24 hours.
+- An account that reports only a weekly value shows **No 5h**.
 - Separate profiles rely on Claude's `--user-data-dir` option, which an update could change.
 - MikroTik CHAP portals are not supported. **Diagnose** tells you if a page looks like one.
 - Builds are ad-hoc signed unless you set `CODESIGN_IDENTITY`, so each rebuild asks once for Keychain access.
 
 More detail for developers is in [macos-app/README.md](macos-app/README.md).
+
+## Credits
+
+Tool marks come from [Lobe Icons](https://github.com/lobehub/lobe-icons) 1.98.0 (MIT). The trademarks belong to their owners, and the marks only identify each tool.
 
 ## Author
 
