@@ -55,7 +55,7 @@ final class PortalClient {
         for key in keys {
             guard let state = SCDynamicStoreCopyValue(store, key as CFString) as? [String: Any],
                   state["InterfaceName"] as? String == name else { continue }
-            return state["Router"] as? String
+            return (state["Router"] as? String).flatMap { LoopbackHost.matches($0) ? nil : $0 }
         }
         return nil
     }
@@ -83,6 +83,8 @@ final class PortalClient {
     private lazy var session: URLSession = {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 5
+        // A page that never ends must not keep growing in memory.
+        cfg.timeoutIntervalForResource = 20
         cfg.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         return URLSession(configuration: cfg, delegate: NoRedirects(), delegateQueue: nil)
     }()
@@ -105,14 +107,13 @@ final class PortalClient {
     func inspectCaptivePage(completion: @escaping (_ isOurPortal: Bool, _ page: CaptivePage?) -> Void) {
         fetchCaptivePage { [weak self] page in
             guard let page = page, let self = self else { completion(false, page); return }
-            completion(Self.isOurPortal(page: page, marker: Settings.shared.portalMarker, ownAddresses: self.ownAddresses), page)
+            completion(Self.isOurPortal(page: page, ownAddresses: self.ownAddresses), page)
         }
     }
 
-    static func isOurPortal(page: CaptivePage, marker: String, ownAddresses: [String]) -> Bool {
-        let trimmed = marker.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return page.form != nil }
-        return PortalMarker.matches(page: page, marker: trimmed, ownAddresses: ownAddresses)
+    static func isOurPortal(page: CaptivePage, ownAddresses: [String]) -> Bool {
+        guard !page.marker.isEmpty else { return page.form != nil }
+        return PortalMarker.matches(page: page, marker: page.marker, ownAddresses: ownAddresses)
     }
 
     // Asks the portal first: internet may lag behind the login while a VPN reconnects.
@@ -140,9 +141,15 @@ final class PortalClient {
             let settings = Settings.shared
             let form = page.form
             let action = form.flatMap { Self.resolve(action: $0.action, base: page.url) }
-            let markerSet = !settings.portalMarker.trimmingCharacters(in: .whitespaces).isEmpty
+            let markerSet = !page.marker.isEmpty
             if form != nil, !PostGuard.allows(target: action, portal: self.portalURL, gateway: page.gateway, markerSet: markerSet) {
                 Log.write("Refused to send credentials: the form posts to another address. Set Login URL to the portal address.")
+                completion(.refused)
+                return
+            }
+            let endpoint = Self.configuredEndpoint(settings.loginURL)
+            if form == nil, endpoint == nil {
+                Log.write("No login form on the page and no usable Login URL — nothing to submit.")
                 completion(.refused)
                 return
             }
@@ -161,9 +168,10 @@ final class PortalClient {
                 self.postForm(url: action,
                               fields: form.filled(username: settings.username, password: password),
                               source: "form",
+                              page: page,
                               completion: completion)
-            } else {
-                self.loginWithConfiguredEndpoint(password: password, completion: completion)
+            } else if let endpoint = endpoint {
+                self.loginWithConfiguredEndpoint(endpoint, password: password, page: page, completion: completion)
             }
         }
     }
@@ -185,41 +193,41 @@ final class PortalClient {
     private func fetchCaptivePage(completion: @escaping (CaptivePage?) -> Void) {
         let marker = Settings.shared.portalMarker.trimmingCharacters(in: .whitespaces)
         guard !marker.isEmpty, let gateway = wifiGateway, let start = URL(string: "http://\(gateway)/login") else {
-            fetchPage(probeURL, hops: 0, completion: completion)
+            fetchPage(probeURL, hops: 0, marker: marker, completion: completion)
             return
         }
-        fetchPage(start, hops: 0) { [weak self] page in
-            if let page = page, let self = self, Self.isOurPortal(page: page, marker: marker, ownAddresses: self.ownAddresses) {
+        fetchPage(start, hops: 0, marker: marker) { [weak self] page in
+            if let page = page, let self = self, Self.isOurPortal(page: page, ownAddresses: self.ownAddresses) {
                 completion(page)
             } else if let self = self {
                 // The portal may not live on the gateway, so its own page must not hide the probe.
-                self.fetchPage(self.probeURL, hops: 0) { completion($0 ?? page) }
+                self.fetchPage(self.probeURL, hops: 0, marker: marker) { completion($0 ?? page) }
             } else {
                 completion(page)
             }
         }
     }
 
-    private func portalRequest(_ url: URL) -> URLRequest {
+    // One marker and gateway for a whole cycle, so the gate and the route cannot disagree.
+    private func portalRequest(_ url: URL, marker: String, gateway: String?) -> URLRequest {
         let host = portalHost
         // Only a marker proves this gateway is the portal; without one the name must not reach it.
-        let markerSet = !Settings.shared.portalMarker.trimmingCharacters(in: .whitespaces).isEmpty
-        let routed = PortalRoute.url(url, portalHost: host, gateway: markerSet ? wifiGateway : nil)
+        let routed = PortalRoute.url(url, portalHost: host, gateway: marker.isEmpty ? nil : gateway)
         var request = URLRequest(url: routed)
         if routed != url { request.setValue(host, forHTTPHeaderField: "Host") }
         return request
     }
 
-    private func fetchPage(_ url: URL, hops: Int, completion: @escaping (CaptivePage?) -> Void) {
-        var request = portalRequest(url)
-        request.timeoutInterval = 6
+    private func fetchPage(_ url: URL, hops: Int, marker: String, completion: @escaping (CaptivePage?) -> Void) {
         let gateway = wifiGateway
+        var request = portalRequest(url, marker: marker, gateway: gateway)
+        request.timeoutInterval = 6
         let task = session.dataTask(with: request) { [weak self] data, response, _ in
             guard let data = data, data.count <= CaptivePage.maxBytes, let html = String(data: data, encoding: .utf8) else {
                 completion(nil)
                 return
             }
-            let page = CaptivePage(url: url, html: html, hops: hops, status: (response as? HTTPURLResponse)?.statusCode, gateway: gateway)
+            let page = CaptivePage(url: url, html: html, hops: hops, status: (response as? HTTPURLResponse)?.statusCode, gateway: gateway, marker: marker)
             let location = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location")
                 .flatMap { URL(string: $0, relativeTo: url)?.absoluteURL }
             guard let self = self, hops < Self.maxRedirectHops,
@@ -228,28 +236,29 @@ final class PortalClient {
                 completion(page)
                 return
             }
-            self.fetchPage(next, hops: hops + 1, completion: completion)
+            self.fetchPage(next, hops: hops + 1, marker: marker, completion: completion)
         }
         task.resume()
     }
 
-    private func loginWithConfiguredEndpoint(password: String, completion: @escaping (LoginSubmit) -> Void) {
+    // A portal never lives on this Mac, so a Login URL pointing here is not one.
+    private static func configuredEndpoint(_ loginURL: String) -> URL? {
+        guard let url = URL(string: loginURL), let host = url.host, !LoopbackHost.matches(host) else { return nil }
+        return url
+    }
+
+    private func loginWithConfiguredEndpoint(_ url: URL, password: String, page: CaptivePage, completion: @escaping (LoginSubmit) -> Void) {
         let settings = Settings.shared
-        guard let url = URL(string: settings.loginURL), url.host != nil else {
-            Log.write("No login form on the page and no Login URL set — nothing to submit.")
-            completion(.refused)
-            return
-        }
         var fields: [(String, String)] = [
             ("username", settings.username),
             ("password", password),
         ]
         fields.append(contentsOf: Self.parseExtraFields(settings.extraFields))
-        postForm(url: url, fields: fields, source: "configured", completion: completion)
+        postForm(url: url, fields: fields, source: "configured", page: page, completion: completion)
     }
 
-    private func postForm(url: URL, fields: [(String, String)], source: String, completion: @escaping (LoginSubmit) -> Void) {
-        var request = portalRequest(url)
+    private func postForm(url: URL, fields: [(String, String)], source: String, page: CaptivePage, completion: @escaping (LoginSubmit) -> Void) {
+        var request = portalRequest(url, marker: page.marker, gateway: page.gateway)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = Self.formEncode(fields).data(using: .utf8)

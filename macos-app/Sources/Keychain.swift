@@ -11,16 +11,24 @@ enum Keychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        let data = Data(password.utf8)
-        // Updating first means a failed save cannot lose the stored password.
-        var status = SecItemUpdate(base as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var add = base
-            add[kSecValueData as String] = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-            status = SecItemAdd(add as CFDictionary, nil)
+        func add(_ value: String) -> OSStatus {
+            var item = base
+            item[kSecValueData as String] = Data(value.utf8)
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            return SecItemAdd(item as CFDictionary, nil)
         }
-        if status != errSecSuccess { Log.write("Keychain: could not save the password (status \(status)).") }
+        let previous = Self.password()
+        // A new item gets this app's own access list; an update would keep whatever list was there.
+        let removed = SecItemDelete(base as CFDictionary)
+        guard removed == errSecSuccess || removed == errSecItemNotFound else {
+            Log.write("Keychain: could not replace the password (status \(removed)).")
+            return
+        }
+        let status = add(password)
+        guard status != errSecSuccess else { return }
+        Log.write("Keychain: could not save the password (status \(status)).")
+        // A failed save must not lose the stored password.
+        if !previous.isEmpty { _ = add(previous) }
     }
 
     // Blocks while macOS shows an authorization prompt; never call it on the main thread.

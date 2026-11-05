@@ -53,6 +53,8 @@ enum CodexAppServer {
         let process = Process(), input = Pipe(), output = Pipe()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = ["app-server"]
+        // The caller's folder could hold project settings the tool would load.
+        process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -115,8 +117,9 @@ enum AntigravityServer {
         request.httpBody = Data(#"{"metadata":{"ideName":"antigravity","extensionName":"antigravity","locale":"en"}}"#.utf8)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.connectionProxyDictionary = [:]
+        configuration.timeoutIntervalForResource = 3
         let session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
-        defer { session.finishTasksAndInvalidate() }
+        defer { session.invalidateAndCancel() }
         let box = ReplyBox()
         session.dataTask(with: request) { data, response, _ in
             let ok = (response as? HTTPURLResponse)?.statusCode == 200 && (data?.count ?? 0) <= maxBytes
@@ -179,7 +182,8 @@ struct LiveUsage {
     var antigravity: AntigravityLive?
 
     mutating func update() {
-        codex = CodexAppServer.read() ?? codex
-        antigravity = AntigravityServer.read() ?? antigravity
+        // A hidden tool is not asked, so the bar handles no session value it will not show.
+        if Settings.shared.showCodex { codex = CodexAppServer.read() ?? codex }
+        if Settings.shared.showAntigravity { antigravity = AntigravityServer.read() ?? antigravity }
     }
 }
