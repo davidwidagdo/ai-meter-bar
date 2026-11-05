@@ -66,11 +66,82 @@ func testProfileScan() {
     T.eq(cache.read(profile: max), .unreadable, "oversized file refused")
 }
 
+func testProfileTrash() {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("ai-meter-trash-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: root) }
+    for name in ["Claude", "Claude-Work"] {
+        try? fm.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+    }
+    func profile(_ folder: String, url: URL? = nil) -> ClaudeProfile {
+        ClaudeProfile(folder: folder, name: folder, url: url ?? root.appendingPathComponent(folder))
+    }
+    func attempt(_ target: ClaudeProfile, running: Set<String> = []) -> (error: ProfileTrashError?, trashed: [URL]) {
+        var trashed: [URL] = []
+        do {
+            try ClaudeProfiles.moveToTrash(target, running: running, root: root) { trashed.append($0) }
+            return (nil, trashed)
+        } catch {
+            return (error as? ProfileTrashError, trashed)
+        }
+    }
+    let work = profile("Claude-Work")
+    let done = attempt(work)
+    T.expect(done.error == nil, "a closed profile can be moved")
+    T.eq(done.trashed, [work.url], "only its own folder is moved")
+    let scanned = ClaudeProfiles.scan(root: root).first { $0.folder == "Claude-Work" }!
+    T.expect(attempt(scanned).error == nil, "a scanned profile can be moved")
+    T.expect(attempt(profile("Claude-Work", url: root.appendingPathComponent("Claude-Work", isDirectory: false))).error == nil, "a trailing slash does not matter")
+    T.expect(attempt(profile("Claude-Work", url: root.appendingPathComponent("Claude-Work", isDirectory: true))).error == nil, "with a trailing slash too")
+    T.eq(attempt(profile("Claude")).error, .protected, "Default is refused")
+    T.eq(attempt(profile("Other")).error, .protected, "a folder that is not a profile is refused")
+    T.eq(attempt(profile("Claude-Work", url: fm.temporaryDirectory)).error, .protected, "a path outside the root is refused")
+    T.eq(attempt(profile("Claude-../Claude")).error, .protected, "a folder with a path is refused")
+    T.eq(attempt(work, running: ["Claude-Work"]).error, .running, "a running profile is refused")
+    T.eq(attempt(profile("Claude-Gone")).error, .failed, "a missing folder fails")
+
+    let link = root.appendingPathComponent("Claude-Link")
+    try? fm.createSymbolicLink(at: link, withDestinationURL: root.appendingPathComponent("Claude"))
+    let linked = attempt(profile("Claude-Link"))
+    T.eq(linked.error, .failed, "a link is refused")
+    T.eq(linked.trashed, [], "a link is never moved")
+
+    do {
+        try ClaudeProfiles.moveToTrash(work, running: [], root: root) { _ in throw CocoaError(.fileWriteUnknown) }
+        T.expect(false, "a failed move throws")
+    } catch {
+        T.expect(error as? ProfileTrashError == .failed, "a failed move is reported")
+    }
+    T.expect(fm.fileExists(atPath: work.url.path), "the folder stays after a failed move")
+
+    let apps = root.appendingPathComponent("Apps")
+    func launcher(_ name: String, identifier: String) {
+        let contents = apps.appendingPathComponent(ProfileNames.launcherName(name)).appendingPathComponent("Contents")
+        try? fm.createDirectory(at: contents, withIntermediateDirectories: true)
+        let plist = try? PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": identifier], format: .xml, options: 0)
+        try? plist?.write(to: contents.appendingPathComponent("Info.plist"))
+    }
+    launcher("Work", identifier: ProfileNames.launcherIdentifier("Work"))
+    launcher("Mine", identifier: "com.example.other")
+    var moved: [String] = []
+    T.eq(ClaudeLauncher.moveToTrash(name: "Work", in: apps) { moved.append($0.lastPathComponent) }, true, "our launcher is moved")
+    T.eq(ClaudeLauncher.moveToTrash(name: "Mine", in: apps) { moved.append($0.lastPathComponent) }, false, "another app with the name stays")
+    T.eq(ClaudeLauncher.moveToTrash(name: "None", in: apps) { moved.append($0.lastPathComponent) }, false, "no launcher, nothing to move")
+    T.eq(moved, ["Claude - Work.app"], "only our launcher went")
+}
+
 func testProfileRowModel() {
     let now = Date(timeIntervalSince1970: 100_000)
     func model(_ usage: ClaudeUsageResult, running: Bool, left: Bool = true) -> ProfileRowModel {
         ProfileRowModel.make(name: "Max", usage: usage, running: running, showLeft: left, now: now)
     }
+    let weeklyOnly = model(.reading(ClaudeUsageReading(date: now.addingTimeInterval(-720), fiveHourUsed: nil, weekUsed: 20)), running: true)
+    T.eq(weeklyOnly.fiveHour, .noFiveHour, "no 5h value is named, not shown as a failure")
+    T.eq(weeklyOnly.fiveHour.hidesMeter, true, "no 5h has no bar")
+    T.eq(weeklyOnly.week.text, "80%", "weekly value still shows")
+    T.eq(ProfileRowModel.menuBarValue(fiveHour: weeklyOnly.fiveHour, week: weeklyOnly.week), "80%", "menu bar falls back to weekly")
+    let neither = model(.reading(ClaudeUsageReading(date: now.addingTimeInterval(-720), fiveHourUsed: nil, weekUsed: nil)), running: true)
+    T.eq(neither.fiveHour.text, "—", "nothing reported stays unknown")
     let fresh = ClaudeUsageReading(date: now.addingTimeInterval(-720), fiveHourUsed: 38, weekUsed: 43)
     var m = model(.reading(fresh), running: true)
     T.eq(m.status, "Running · 12m ago", "running status")

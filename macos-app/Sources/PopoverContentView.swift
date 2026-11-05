@@ -148,10 +148,13 @@ final class PopoverContentView: NSStackView {
     private func makeProfilesHeader() -> NSView {
         let title = UI.label("Claude Profiles", size: 12.5, weight: .semibold, color: .secondaryLabelColor)
         UI.flexible(title)
+        let mark = NSImageView(image: ProviderMark.claude.symbol(size: 14))
+        mark.setAccessibilityElement(false)
+        UI.fix(mark, width: 14, height: 14)
         UI.fix(fiveHeader, width: QuotaColumn.width)
         UI.fix(weekHeader, width: QuotaColumn.width)
         let add = ClosureButton(symbol: "plus.circle.fill", label: "New profile", tint: .controlAccentColor) { [weak self] in self?.onNewProfile?() }
-        let row = UI.row([title, fiveHeader, weekHeader, add])
+        let row = UI.row([mark, title, fiveHeader, weekHeader, add])
         row.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
         return row
     }
@@ -222,19 +225,29 @@ final class PopoverContentView: NSStackView {
             addOtherRow(makeCodexRow(codex, showLeft: showLeft, now: now))
         }
         if settings.showAntigravity, let antigravity = snapshot.antigravity {
-            let age = now.timeIntervalSince(antigravity.lastActive)
-            let elapsed = RelativeAge.short(age)
-            var detail = "Last active \(elapsed == "now" ? "now" : "\(elapsed) ago")"
+            var detail = lastActive(antigravity.lastActive, now: now)
             if let model = antigravity.model { detail += " · \(model)" }
-            let names = UI.column([UI.label("Antigravity", weight: .semibold), UI.label(detail, size: 11.5, color: .secondaryLabelColor)], spacing: 1)
-            UI.flexible(names)
-            let row = UI.row([TileView(letter: "Ag", hex: ProfileTint.all[5].hex), names])
-            row.edgeInsets = NSEdgeInsets(top: 5, left: 6, bottom: 5, right: 6)
-            addOtherRow(row)
+            addOtherRow(makeActivityRow(.antigravity, name: "Antigravity", detail: detail))
+        }
+        for status in snapshot.tools where status.isRecent(now: now) && !settings.hiddenTools.contains(status.tool.rawValue) {
+            addOtherRow(makeActivityRow(status.tool.mark, name: status.tool.displayName, detail: lastActive(status.lastActive, now: now)))
         }
         otherCard.isHidden = otherRows.arrangedSubviews.isEmpty
         emptyLabel.isHidden = !(profileRows.arrangedSubviews.isEmpty && otherRows.arrangedSubviews.isEmpty)
         onHeightChange?()
+    }
+
+    private func lastActive(_ date: Date, now: Date) -> String {
+        let elapsed = RelativeAge.short(now.timeIntervalSince(date))
+        return "Last active \(elapsed == "now" ? "now" : "\(elapsed) ago")"
+    }
+
+    private func makeActivityRow(_ mark: ProviderMark, name: String, detail: String) -> NSView {
+        let names = UI.column([UI.label(name, weight: .semibold), UI.label(detail, size: 11.5, color: .secondaryLabelColor)], spacing: 1)
+        UI.flexible(names)
+        let row = UI.row([TileView(mark: mark), names])
+        row.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
+        return row
     }
 
     private func addOtherRow(_ row: NSView) {
@@ -252,8 +265,8 @@ final class PopoverContentView: NSStackView {
         secondary.set(model.week, spoken: QuotaColumn.spoken(owner: "Codex", window: "weekly", cell: model.week, showLeft: showLeft))
         let gap = NSView()
         UI.fix(gap, width: 28, height: 1)
-        let row = UI.row([TileView(letter: "Cx", hex: ProfileTint.all[5].hex), names, primary, secondary, gap])
-        row.edgeInsets = NSEdgeInsets(top: 5, left: 6, bottom: 5, right: 6)
+        let row = UI.row([TileView(mark: .openAI), names, primary, secondary, gap])
+        row.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
         return row
     }
 

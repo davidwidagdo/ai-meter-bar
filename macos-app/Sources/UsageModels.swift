@@ -63,11 +63,28 @@ struct ClaudeUsageReading: Equatable {
     let date: Date
     let fiveHourUsed: Double?
     let weekUsed: Double?
+    var account: String?
 }
 
 enum ClaudeUsageResult: Equatable {
     case noData, unreadable
     case reading(ClaudeUsageReading)
+}
+
+enum AccountUsage {
+    // Folders signed in to one account share its newest reading; the folder name plays no part.
+    static func merged(_ results: [ClaudeUsageResult]) -> [ClaudeUsageResult] {
+        var newest: [String: ClaudeUsageReading] = [:]
+        for case .reading(let reading) in results {
+            guard let account = reading.account else { continue }
+            if let current = newest[account], current.date >= reading.date { continue }
+            newest[account] = reading
+        }
+        return results.map { result in
+            guard case .reading(let reading) = result, let account = reading.account, let best = newest[account] else { return result }
+            return .reading(best)
+        }
+    }
 }
 
 struct QuotaCell: Equatable {
@@ -76,8 +93,10 @@ struct QuotaCell: Equatable {
     let level: QuotaLevel
     let isStale: Bool
     let isUnknown: Bool
+    var hidesMeter = false
 
     static let unknown = QuotaCell(text: "—", fraction: 0, level: .normal, isStale: false, isUnknown: true)
+    static let noFiveHour = QuotaCell(text: "No 5h", fraction: 0, level: .normal, isStale: false, isUnknown: true, hidesMeter: true)
 
     static func make(used: Double?, freshness: Freshness, showLeft: Bool) -> QuotaCell {
         guard let used = used, used.isFinite, freshness != .expired else { return unknown }
@@ -114,7 +133,9 @@ struct ProfileRowModel: Equatable {
             break
         case .reading(let r):
             let age = now.timeIntervalSince(r.date)
-            fiveHour = .make(used: r.fiveHourUsed, freshness: QuotaMath.fiveHourFreshness(age: age), showLeft: showLeft)
+            fiveHour = r.fiveHourUsed == nil && r.weekUsed != nil
+                ? .noFiveHour
+                : .make(used: r.fiveHourUsed, freshness: QuotaMath.fiveHourFreshness(age: age), showLeft: showLeft)
             week = .make(used: r.weekUsed, freshness: QuotaMath.weekFreshness(age: age), showLeft: showLeft)
             let elapsed = RelativeAge.short(age)
             status = "\(running ? "Running" : "Closed") · \(elapsed == "now" ? "now" : "\(elapsed) ago")"
@@ -187,6 +208,38 @@ struct RecentSession: Equatable {
     let tokens: Int?
 }
 
+enum AITool: String, CaseIterable {
+    case openCode = "opencode", copilot, cursor
+
+    var displayName: String {
+        switch self {
+        case .openCode: return "OpenCode"
+        case .copilot:  return "GitHub Copilot"
+        case .cursor:   return "Cursor"
+        }
+    }
+
+    // Relative to home; only modification dates are read, never contents.
+    var activityPaths: [String] {
+        switch self {
+        case .openCode: return [".local/share/opencode/opencode.db-wal", ".local/share/opencode/opencode.db", ".local/share/opencode/log"]
+        case .copilot:  return [".copilot/session-state", ".copilot/logs", ".copilot"]
+        case .cursor:   return ["Library/Application Support/Cursor/User/globalStorage/state.vscdb", ".cursor"]
+        }
+    }
+}
+
+struct LocalToolStatus: Equatable {
+    let tool: AITool
+    let lastActive: Date
+
+    private static let recentWindow: TimeInterval = 30 * 86400
+
+    func isRecent(now: Date) -> Bool {
+        now.timeIntervalSince(lastActive) < Self.recentWindow
+    }
+}
+
 struct AISnapshot: Equatable {
     struct Profile: Equatable {
         let folder: String
@@ -198,6 +251,7 @@ struct AISnapshot: Equatable {
     var profiles: [Profile] = []
     var codex: CodexReading?
     var antigravity: AntigravityStatus?
+    var tools: [LocalToolStatus] = []
 
     // A running profile with the newest reading, else the newest reading at all.
     static func active(_ profiles: [Profile]) -> Profile? {

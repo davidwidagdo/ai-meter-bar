@@ -22,6 +22,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var profileSwitches: [String: NSSwitch] = [:]
     private let codexSwitch = NSSwitch()
     private let antigravitySwitch = NSSwitch()
+    private var toolSwitches: [AITool: NSSwitch] = [:]
 
     // Portal tab
     private let tabView = NSTabView()
@@ -168,9 +169,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     private func buildAccountsTab() -> NSView {
         let title = UI.label("Claude Profiles", size: 15, weight: .semibold)
+        let mark = NSImageView(image: ProviderMark.claude.symbol(size: 16))
+        mark.setAccessibilityElement(false)
+        UI.fix(mark, width: 16, height: 16)
         unitControl.setAccessibilityLabel("Show usage as")
         let add = ClosureButton(title: "New Profile") { [weak self] in self?.onNewProfile?() }
-        let header = UI.row([title, UI.spacer(), unitControl, add])
+        let header = UI.row([mark, title, UI.spacer(), unitControl, add])
         UI.fix(header, width: 560)
 
         let profiles = CardView(profileRows, padding: 8)
@@ -180,18 +184,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let others = UI.label("Other Tools", size: 15, weight: .semibold)
         codexSwitch.setAccessibilityLabel("Show Codex in the bar")
         antigravitySwitch.setAccessibilityLabel("Show Antigravity in the bar")
-        let tools = CardView(UI.column([
-            toolRow("Cx", "Codex", "Current account, read from local sessions", codexSwitch),
-            toolRow("Ag", "Antigravity", "Last active time only", antigravitySwitch),
-        ], spacing: 4), padding: 8)
+        var toolRows = [
+            toolRow(.openAI, "Codex", "Current account, read from local sessions", codexSwitch),
+            toolRow(.antigravity, "Antigravity", "Last active time only", antigravitySwitch),
+        ]
+        for status in LocalTools.listed() {
+            let toggle = NSSwitch()
+            toggle.setAccessibilityLabel("Show \(status.tool.displayName) in the bar")
+            toolSwitches[status.tool] = toggle
+            toolRows.append(toolRow(status.tool.mark, status.tool.displayName, "Shown when used in the last 30 days", toggle))
+        }
+        let tools = CardView(UI.column(toolRows, spacing: 4), padding: 8)
         UI.fix(tools, width: 560)
 
         return UI.column([header, profiles, note, others, tools], spacing: 12)
     }
 
-    private func toolRow(_ letter: String, _ name: String, _ detail: String, _ toggle: NSSwitch) -> NSView {
+    private func toolRow(_ mark: ProviderMark, _ name: String, _ detail: String, _ toggle: NSSwitch) -> NSView {
         let names = UI.column([UI.label(name, weight: .semibold), UI.label(detail, size: 11.5, color: .secondaryLabelColor)], spacing: 1)
-        let row = UI.row([TileView(letter: letter, hex: ProfileTint.all[5].hex), names, UI.spacer(), toggle], spacing: 12)
+        let row = UI.row([TileView(mark: mark), names, UI.spacer(), toggle], spacing: 12)
         UI.fix(row, width: 544)
         return row
     }
@@ -201,9 +212,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         profileSwitches.removeAll()
         let settings = Settings.shared
         let cache = ClaudeUsageCache()
-        for profile in ClaudeProfiles.listed() {
+        let profiles = ClaudeProfiles.listed()
+        let usages = AccountUsage.merged(profiles.map { cache.read(profile: $0) })
+        var firstOnAccount: [String: String] = [:]
+        for (profile, usage) in zip(profiles, usages) {
             let name = settings.alias(forFolder: profile.folder) ?? profile.name
-            let names = UI.column([UI.label(name, weight: .semibold), UI.label(profile.folder, size: 11.5, color: .secondaryLabelColor, mono: true)], spacing: 1)
+            var lines = [UI.label(name, weight: .semibold), UI.label(profile.folder, size: 11.5, color: .secondaryLabelColor, mono: true)]
+            if case .reading(let reading) = usage, let account = reading.account {
+                if let owner = firstOnAccount[account] {
+                    lines.append(UI.label("Same account as \(owner)", size: 11.5, color: .secondaryLabelColor))
+                } else {
+                    firstOnAccount[account] = name
+                }
+            }
+            let names = UI.column(lines, spacing: 1)
             UI.flexible(names)
 
             let toggle = NSSwitch()
@@ -212,7 +234,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             profileSwitches[profile.folder] = toggle
 
             var age = "No usage yet"
-            if case .reading(let reading) = cache.read(profile: profile) {
+            if case .reading(let reading) = usage {
                 age = "\(RelativeAge.short(Date().timeIntervalSince(reading.date))) ago"
             }
             let ageLabel = UI.label(age, size: 12, color: .secondaryLabelColor)
@@ -278,7 +300,42 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         colors.submenu = colorMenu
         menu.addItem(colors)
         menu.addItem(MenuAction("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([profile.url]) })
+        guard profile.folder != ProfileNames.defaultFolder else { return menu }
+        menu.autoenablesItems = false
+        menu.addItem(.separator())
+        let running = ClaudeInstances.running().contains { $0.folder == profile.folder }
+        let trash = MenuAction(running ? "Move to Trash… (quit it first)" : "Move to Trash…") { [weak self] in
+            self?.confirmTrash(profile, name: name)
+        }
+        trash.isEnabled = !running
+        menu.addItem(trash)
         return menu
+    }
+
+    private func confirmTrash(_ profile: ClaudeProfile, name: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.icon = Monogram.image(letter: Monogram.letter(for: name), hex: Settings.shared.tint(forFolder: profile.folder), size: 64)
+        alert.messageText = "Move “\(name)” to the Trash?"
+        alert.informativeText = "Its folder, sign-in and local chats go to the Trash, and so does its launcher. Put it back from the Trash to restore it."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Move to Trash").hasDestructiveAction = true
+        guard alert.runModal() == .alertSecondButtonReturn else { return }
+        do {
+            try ClaudeProfiles.moveToTrash(profile, running: Set(ClaudeInstances.running().map(\.folder)))
+        } catch {
+            let failure = NSAlert()
+            failure.messageText = "Could not move “\(name)” to the Trash"
+            failure.informativeText = error as? ProfileTrashError == .running
+                ? "Quit this profile in Claude, then try again."
+                : "Nothing was changed. You can move its folder yourself with Show in Finder."
+            failure.runModal()
+            return
+        }
+        if ProfileNames.canHaveLauncher(profile) { ClaudeLauncher.moveToTrash(name: profile.name) }
+        Settings.shared.forgetProfile(folder: profile.folder)
+        Log.write("A Claude profile was moved to the Trash.")
+        profilesChanged()
     }
 
     private func rename(_ profile: ClaudeProfile, current: String) {
@@ -507,6 +564,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         rebuildProfiles()
         codexSwitch.state = s.showCodex ? .on : .off
         antigravitySwitch.state = s.showAntigravity ? .on : .off
+        for (tool, toggle) in toolSwitches { toggle.state = s.hiddenTools.contains(tool.rawValue) ? .off : .on }
 
         autoLoginCheck.state = s.autoLoginEnabled ? .on : .off
         pollField.stringValue = String(s.pollInterval)
@@ -549,6 +607,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         s.hiddenProfiles = Set(profileSwitches.filter { $0.value.state == .off }.keys)
         s.showCodex = codexSwitch.state == .on
         s.showAntigravity = antigravitySwitch.state == .on
+        s.hiddenTools = Set(toolSwitches.filter { $0.value.state == .off }.map(\.key.rawValue))
 
         s.autoLoginEnabled = autoLoginCheck.state == .on
         s.pollInterval = Int(pollField.stringValue) ?? 15

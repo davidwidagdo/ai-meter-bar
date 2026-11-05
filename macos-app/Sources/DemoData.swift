@@ -9,14 +9,20 @@ enum DemoData {
         return AISnapshot(
             profiles: [
                 .init(folder: "Claude", name: "Default", usage: reading(minutesAgo: 12, fiveHour: 38, week: 43), isRunning: true),
-                .init(folder: "Claude-Max", name: "Max", usage: reading(minutesAgo: 180, fiveHour: 60, week: 29), isRunning: true),
+                .init(folder: "Claude-Max", name: "Max", usage: reading(minutesAgo: 180, fiveHour: nil, week: 29), isRunning: true),
                 .init(folder: "Claude-Work", name: "Work", usage: reading(minutesAgo: 360, fiveHour: 90, week: 75), isRunning: false),
-                .init(folder: "Claude-Studio", name: "Studio", usage: reading(minutesAgo: 22 * 1440, fiveHour: 10, week: 10), isRunning: false),
+                .init(folder: "Claude-Studio", name: "Studio", usage: reading(minutesAgo: 12, fiveHour: 38, week: 43), isRunning: false),
             ],
             codex: CodexReading(primary: CodexWindow(usedPercent: 18, windowMinutes: 300, resetsAt: now.addingTimeInterval(3600)),
                                 secondary: CodexWindow(usedPercent: 41, windowMinutes: 10080, resetsAt: now.addingTimeInterval(4 * 86400)),
                                 date: now.addingTimeInterval(-720)),
-            antigravity: AntigravityStatus(lastActive: now.addingTimeInterval(-720), model: nil))
+            antigravity: AntigravityStatus(lastActive: now.addingTimeInterval(-720), model: nil),
+            tools: tools(now: now))
+    }
+
+    static func tools(now: Date) -> [LocalToolStatus] {
+        [LocalToolStatus(tool: .openCode, lastActive: now.addingTimeInterval(-86400)),
+         LocalToolStatus(tool: .copilot, lastActive: now.addingTimeInterval(-8 * 86400))]
     }
 
     static let profiles = ["Claude", "Claude-Max", "Claude-Work", "Claude-Studio"].map {

@@ -42,11 +42,19 @@ enum ClaudeUsageParser {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let samples = root["samples"] as? [[String: Any]] else { return .unreadable }
         guard let last = samples.last else { return .noData }
-        guard let millis = (last["t"] as? NSNumber)?.doubleValue else { return .unreadable }
-        let usage = last["u"] as? [String: Any]
+        // Claude also writes empty samples, so the newest one with a value counts.
+        let sample = samples.last { usage(in: $0).fiveHour != nil || usage(in: $0).week != nil } ?? last
+        guard let millis = (sample["t"] as? NSNumber)?.doubleValue else { return .unreadable }
+        let values = usage(in: sample)
         return .reading(ClaudeUsageReading(date: Date(timeIntervalSince1970: millis / 1000),
-                                           fiveHourUsed: percent(usage?["fh"]),
-                                           weekUsed: percent(usage?["sd"])))
+                                           fiveHourUsed: values.fiveHour,
+                                           weekUsed: values.week,
+                                           account: sample["org"] as? String))
+    }
+
+    private static func usage(in sample: [String: Any]) -> (fiveHour: Double?, week: Double?) {
+        let values = sample["u"] as? [String: Any]
+        return (percent(values?["fh"]), percent(values?["sd"]))
     }
 
     private static func percent(_ value: Any?) -> Double? {
@@ -111,6 +119,19 @@ enum AntigravityParser {
         let value = text[range].dropFirst("last_selected_agent_model:".count)
             .trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "\"")))
         return value.isEmpty ? nil : value
+    }
+}
+
+enum LocalTools {
+    static func read(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [LocalToolStatus] {
+        AITool.allCases.compactMap { tool in
+            let dates = tool.activityPaths.compactMap { SafeFile.modificationDate(home.appendingPathComponent($0)) }
+            return dates.max().map { LocalToolStatus(tool: tool, lastActive: $0) }
+        }
+    }
+
+    static func listed() -> [LocalToolStatus] {
+        AppMode.isDemo ? DemoData.tools(now: Date()) : read()
     }
 }
 

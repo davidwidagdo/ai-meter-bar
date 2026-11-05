@@ -17,11 +17,13 @@ Developer notes. See the [main README](../README.md) for what the app does.
 | Meters | `MeterClock`, `SpeedMonitor`, `SystemMonitor`, `UsageStore`, `UsageHistoryWindowController` |
 | AI usage | `LocalUsageReaders`, `UsageModels`, `AIUsageCoordinator` |
 | Claude profiles | `ClaudeProfiles`, `ClaudeInstances`, `ClaudeLauncher`, `Monogram`, `NewProfileWindowController` |
-| Interface | `StatusPopoverController`, `PopoverContentView`, `PopoverKit`, `MenuBarRenderer`, `SettingsWindowController` |
+| Interface | `StatusPopoverController`, `PopoverContentView`, `PopoverKit`, `ProviderMark`, `MenuBarRenderer`, `SettingsWindowController` |
 
 ## Behavior worth knowing
 
-- **Sign-in results.** A login only counts as failed when the portal still asks for credentials. No evidence, or a sleep during the check, means check again.
+- **Accounts.** Each usage sample names its account. Folders on one account show its newest reading, and the account ID is never shown or logged.
+- **Move to Trash.** Settings, Accounts, the row's menu. Never Default or a running profile, and only a launcher this app built goes with it.
+- **Sign-in results. A login only counts as failed when the portal still asks for credentials. No evidence, or a sleep during the check, means check again.
 - **Sleep.** Automatic checks stop while the Mac sleeps, including dark wakes. Locking the screen does not stop them.
 - **After a rejection.** Automatic attempts wait 1, 5, then 15 minutes. Sign in Now and saving Settings clear the wait.
 - **Login URL.** Without one, a form goes only to the Wi-Fi gateway, and only once a Portal marker matches.

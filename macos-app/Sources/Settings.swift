@@ -57,6 +57,7 @@ final class Settings {
         static let profileAliases = "claudeProfileAliases"
         static let profileTints = "claudeProfileTints"
         static let hiddenProfiles = "hiddenClaudeProfiles"
+        static let hiddenTools = "hiddenAITools"
     }
 
     private init() {
@@ -136,6 +137,19 @@ final class Settings {
     var hiddenProfiles: Set<String> {
         get { Set(defaults.stringArray(forKey: Key.hiddenProfiles) ?? []) }
         set { defaults.set(newValue.sorted(), forKey: Key.hiddenProfiles) }
+    }
+
+    var hiddenTools: Set<String> {
+        get { Set(defaults.stringArray(forKey: Key.hiddenTools) ?? []) }
+        set { defaults.set(newValue.sorted(), forKey: Key.hiddenTools) }
+    }
+
+    func forgetProfile(folder: String) {
+        setAlias(nil, forFolder: folder)
+        var tints = defaults.dictionary(forKey: Key.profileTints) as? [String: String] ?? [:]
+        tints[folder] = nil
+        defaults.set(tints, forKey: Key.profileTints)
+        hiddenProfiles.remove(folder)
     }
 
     func alias(forFolder folder: String) -> String? {
