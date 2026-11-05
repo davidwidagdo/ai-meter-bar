@@ -239,8 +239,8 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
             let cells = aiCells()
             let claude = cells.claude.map { ProfileRowModel.menuBarValue(fiveHour: $0.five, week: $0.week) } ?? "—"
             columns.append(Column(rows: [
-                Column.Row(label: "C", value: claude),
-                Column.Row(label: "G", value: cells.codex?.text ?? "—"),
+                Column.Row(label: "", value: claude, mark: .claude),
+                Column.Row(label: "", value: cells.codex?.text ?? "—", mark: .openAI),
             ], valueSample: "~100%"))
         }
         return columns

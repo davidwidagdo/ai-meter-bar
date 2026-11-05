@@ -14,7 +14,7 @@
 
 ## Features
 
-- **AI quota.** 5-hour and weekly quota per Claude account, whatever the profile is called, plus Codex quota. Every reading shows its age.
+- **AI quota.** 5-hour and weekly quota per Claude account, whatever the profile is called, plus Codex quota. Every reading shows its age, and the menu bar marks each value with its tool.
 - **Claude profiles.** Open any profile in one click, create one with its own launcher and no Automator step, or move one to the Trash.
 - **Other tools.** Antigravity, OpenCode, GitHub Copilot and Cursor appear with their marks when used in the last 30 days.
 - **Portal sign-in.** Signs in within seconds after a network change or wake.
@@ -87,7 +87,7 @@ Click the gauge in the menu bar. For portal sign-in, open **Settings**, choose *
 
 ## Limits
 
-- Usage is only as fresh as Claude's last save, which is why every row shows its age.
+- Usage is only as fresh as Claude's last save, which is why every row shows its age. Claude pauses its own check until its menu bar icon has been opened in the last 24 hours.
 - An account that reports only a weekly value shows **No 5h**.
 - Separate profiles rely on Claude's `--user-data-dir` option, which an update could change.
 - MikroTik CHAP portals are not supported. **Diagnose** tells you if a page looks like one.

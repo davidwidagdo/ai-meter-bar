@@ -25,6 +25,11 @@ enum ProviderMark: CaseIterable {
         }
     }
 
+    // Parsed once, because the menu bar image can be rebuilt every second.
+    private static let templates = Dictionary(uniqueKeysWithValues: allCases.map { ($0, $0.glyph(fill: "#000000")) })
+
+    var template: NSImage? { Self.templates[self] ?? nil }
+
     private func glyph(fill: String) -> NSImage? {
         let svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24' fill='\(fill)' fill-rule='evenodd'>"
             + "<path d='\(path)'/></svg>"
