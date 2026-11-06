@@ -7,11 +7,14 @@ final class ProfileRowView: NSStackView {
         alignment = .centerY
         distribution = .fill
         spacing = 10
-        edgeInsets = NSEdgeInsets(top: 5, left: 6, bottom: 5, right: 6)
+        edgeInsets = UI.insets()
+        UI.fix(self, height: UI.rowHeight)
 
         let name = UI.label(model.name, weight: .semibold)
         name.toolTip = model.name
         let status = UI.label(model.status, size: 11.5, color: .secondaryLabelColor)
+        status.lineBreakMode = .byTruncatingTail
+        status.toolTip = model.sameAccountAs.map { "Same account as \($0)" }
         let names = UI.column([name, UI.row([StatusDot(filled: model.isRunning), status], spacing: 5)], spacing: 1)
         UI.flexible(names)
 
@@ -62,7 +65,7 @@ final class PopoverContentView: NSStackView {
     private let profileRows = UI.column([], spacing: 0)
     private lazy var pausedHint: NSStackView = {
         let row = UI.row([UI.wrappingLabel("Claude paused its usage check. Click its menu bar icon, then Refresh.", size: 11.5, width: 320)])
-        row.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 2, right: 6)
+        row.edgeInsets = NSEdgeInsets(top: 4, left: UI.rowSide, bottom: 2, right: UI.rowSide)
         return row
     }()
     private lazy var profilesCard: CardView = {
@@ -80,9 +83,21 @@ final class PopoverContentView: NSStackView {
     private let cpuValue = UI.label("—", weight: .semibold)
     private let ramValue = UI.label("—", weight: .semibold)
     private let pressureValue = UI.label("—", weight: .semibold)
-    private lazy var sessionsButton = ClosureButton(title: "Recent Sessions") { [weak self] in self?.toggleSessions() }
+    private lazy var sessionsToggle = ClosureButton(symbol: "chevron.right", label: "Recent Sessions") { [weak self] in self?.toggleSessions() }
+    private lazy var sessionsHeader: CardView = {
+        let title = UI.sectionTitle("Recent Sessions")
+        UI.flexible(title)
+        let row = UI.row([title, sessionsToggle])
+        row.edgeInsets = UI.insets()
+        let card = CardView(row)
+        card.clickTarget = sessionsToggle
+        return card
+    }()
     private let sessionRows = UI.column([], spacing: 6)
-    private lazy var sessionsCard = CardView(sessionRows, padding: 12)
+    private lazy var sessionsCard: CardView = {
+        sessionRows.edgeInsets = UI.insets(vertical: 4)
+        return CardView(sessionRows)
+    }()
     private var sessionsOpen = false
 
     override var isFlipped: Bool { true }
@@ -95,18 +110,15 @@ final class PopoverContentView: NSStackView {
         edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
         translatesAutoresizingMaskIntoConstraints = false
 
-        let parts: [NSView] = [makeHeader(), alertCard, profilesCard, otherCard, emptyLabel, makeSystemCard(), sessionsButton, sessionsCard]
+        let parts: [NSView] = [makeHeader(), alertCard, profilesCard, otherCard, emptyLabel, makeSystemCard(), sessionsHeader, sessionsCard]
         parts.forEach { addArrangedSubview($0) }
-        for part in [alertCard, profilesCard, otherCard, sessionsCard, parts[0], parts[5], sessionsButton] as [NSView] {
+        for part in [alertCard, profilesCard, otherCard, sessionsCard, parts[0], parts[5], sessionsHeader] as [NSView] {
             part.translatesAutoresizingMaskIntoConstraints = false
             part.widthAnchor.constraint(equalToConstant: Self.width - 28).isActive = true
         }
         alertCard.isHidden = true
         sessionsCard.isHidden = true
         emptyLabel.isHidden = true
-        sessionsButton.image = UI.symbol("chevron.right", size: 10, weight: .semibold)
-        sessionsButton.imagePosition = .imageTrailing
-        sessionsButton.alignment = .left
     }
 
     required init?(coder: NSCoder) { nil }
@@ -116,12 +128,13 @@ final class PopoverContentView: NSStackView {
     private func makeHeader() -> NSView {
         statusIcon.contentTintColor = .controlAccentColor
         statusIcon.setAccessibilityElement(false)
-        UI.fix(statusIcon, width: 28, height: 28)
+        UI.fix(statusIcon, width: UI.tileSize, height: 28)
         let titles = UI.column([titleLabel, subtitleLabel], spacing: 1)
         UI.flexible(titles)
         let speeds = UI.column([downLabel, upLabel], spacing: 1)
         speeds.alignment = .trailing
         let top = UI.row([statusIcon, titles, speeds])
+        top.edgeInsets = NSEdgeInsets(top: 0, left: UI.panelInset, bottom: 0, right: UI.panelInset)
 
         todayButton.isBordered = false
         todayButton.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
@@ -133,6 +146,8 @@ final class PopoverContentView: NSStackView {
             ClosureButton(symbol: "power", label: "Quit") { NSApp.terminate(nil) },
         ], spacing: 2)
         let bottom = UI.row([todayButton, UI.spacer(), tools], spacing: 8)
+        // A borderless button keeps 2pt around its title, so its text still starts on the grid.
+        bottom.edgeInsets = NSEdgeInsets(top: 0, left: UI.panelInset - 2, bottom: 0, right: UI.panelInset)
         let header = UI.column([top, bottom], spacing: 6)
         for row in [top, bottom] {
             row.translatesAutoresizingMaskIntoConstraints = false
@@ -141,26 +156,30 @@ final class PopoverContentView: NSStackView {
         return header
     }
 
+    private let alertText = UI.label("Captive portal detected", weight: .medium)
+
     private func makeAlertCard() -> CardView {
         let icon = NSImageView(image: UI.symbol("exclamationmark.triangle", description: "Warning") ?? NSImage())
         icon.contentTintColor = UI.warn
-        let text = UI.label("Captive portal detected", weight: .medium)
-        UI.flexible(text)
+        UI.fix(icon, width: UI.tileSize)
+        UI.flexible(alertText)
         let button = ClosureButton(title: "Sign in Now") { [weak self] in self?.onSignIn?() }
-        return CardView(UI.row([icon, text, button]), padding: 8)
+        let row = UI.row([icon, alertText, button])
+        row.edgeInsets = UI.insets()
+        return CardView(row)
     }
 
     private func makeProfilesHeader() -> NSView {
-        let title = UI.label("Claude Profiles", size: 12.5, weight: .semibold, color: .secondaryLabelColor)
+        let title = UI.sectionTitle("Claude Profiles")
         UI.flexible(title)
-        let mark = NSImageView(image: ProviderMark.claude.symbol(size: 14))
+        let mark = NSImageView(image: ProviderMark.claude.symbol(size: 16))
         mark.setAccessibilityElement(false)
-        UI.fix(mark, width: 14, height: 14)
+        UI.fix(mark, width: UI.tileSize, height: 16)
         UI.fix(fiveHeader, width: QuotaColumn.width)
         UI.fix(weekHeader, width: QuotaColumn.width)
         let add = ClosureButton(symbol: "plus.circle.fill", label: "New profile", tint: .controlAccentColor) { [weak self] in self?.onNewProfile?() }
         let row = UI.row([mark, title, fiveHeader, weekHeader, add])
-        row.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
+        row.edgeInsets = UI.insets()
         return row
     }
 
@@ -171,7 +190,8 @@ final class PopoverContentView: NSStackView {
         let monitor = ClosureButton(symbol: "waveform.path.ecg", label: "Open Activity Monitor") { [weak self] in self?.onActivityMonitor?() }
         let row = UI.row([metric("CPU", cpuValue), metric("RAM", ramValue), metric("Pressure", pressureValue), UI.spacer(), monitor], spacing: 28)
         row.alignment = .centerY
-        return CardView(row, padding: 10)
+        row.edgeInsets = UI.insets(vertical: 2)
+        return CardView(row)
     }
 
     // MARK: - Updates
@@ -188,7 +208,9 @@ final class PopoverContentView: NSStackView {
         case .needsLogin: symbol = "wifi.exclamationmark"
         }
         statusIcon.image = UI.symbol(symbol, size: 15, weight: .medium)
-        let wantsAlert = state == .needsLogin && autoLogin
+        // With auto-login off nothing else can sign in, so the button stays while the Mac is offline.
+        let wantsAlert = state == .needsLogin || (state == .idle && !autoLogin)
+        alertText.stringValue = autoLogin ? "Captive portal detected" : "Auto-login is off"
         if alertCard.isHidden == wantsAlert {
             alertCard.isHidden = !wantsAlert
             onHeightChange?()
@@ -213,9 +235,15 @@ final class PopoverContentView: NSStackView {
         weekHeader.stringValue = showLeft ? "Week left" : "Week used"
 
         profileRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        var firstOnAccount: [String: String] = [:]
         for profile in snapshot.profiles where !settings.hiddenProfiles.contains(profile.folder) {
             let name = settings.alias(forFolder: profile.folder) ?? profile.name
-            let model = ProfileRowModel.make(name: name, usage: profile.usage, running: profile.isRunning, showLeft: showLeft, now: now)
+            var sameAs: String?
+            if case .reading(let reading) = profile.usage, let account = reading.account {
+                sameAs = firstOnAccount[account]
+                if sameAs == nil { firstOnAccount[account] = name }
+            }
+            let model = ProfileRowModel.make(name: name, usage: profile.usage, running: profile.isRunning, showLeft: showLeft, now: now, sameAccountAs: sameAs)
             let folder = profile.folder
             let row = ProfileRowView(model: model, letter: Monogram.letter(for: name), hex: settings.tint(forFolder: folder), showLeft: showLeft) { [weak self] in
                 self?.onOpenProfile?(folder)
@@ -234,11 +262,11 @@ final class PopoverContentView: NSStackView {
         }
         if settings.showAntigravity, let antigravity = snapshot.antigravity {
             let model = AntigravityRowModel.make(antigravity, showLeft: showLeft, now: now)
-            addOtherRow(makeActivityRow(.antigravity, name: "Antigravity", detail: model.detail))
+            addOtherRow(makeToolRow(.antigravity, name: "Antigravity", detail: model.detail))
             for quota in model.quotas { addOtherRow(makeQuotaRow(quota, showLeft: showLeft)) }
         }
         for status in snapshot.tools where status.isRecent(now: now) && !settings.hiddenTools.contains(status.tool.rawValue) {
-            addOtherRow(makeActivityRow(status.tool.mark, name: status.tool.displayName, detail: LastActive.text(status.lastActive, now: now)))
+            addOtherRow(makeToolRow(status.tool.mark, name: status.tool.displayName, detail: LastActive.line(status.lastActive, now: now)))
         }
         otherCard.isHidden = otherRows.arrangedSubviews.isEmpty
         emptyLabel.isHidden = !(profileRows.arrangedSubviews.isEmpty && otherRows.arrangedSubviews.isEmpty)
@@ -255,19 +283,20 @@ final class PopoverContentView: NSStackView {
         UI.fix(reset, width: 66)
         let column = QuotaColumn()
         column.set(quota.cell, spoken: QuotaColumn.spoken(owner: "Antigravity", window: quota.fullName, cell: quota.cell, showLeft: showLeft))
-        let tileGap = NSView(), endGap = NSView()
-        UI.fix(tileGap, width: 30, height: 1)
-        UI.fix(endGap, width: 28, height: 1)
-        let row = UI.row([tileGap, name, reset, column, endGap])
-        row.edgeInsets = NSEdgeInsets(top: 3, left: 6, bottom: 3, right: 6)
+        let row = UI.row([UI.gap(width: UI.tileSize), name, reset, column, UI.gap(width: UI.actionWidth)])
+        row.edgeInsets = UI.insets()
+        UI.fix(row, height: UI.subRowHeight)
         return row
     }
 
-    private func makeActivityRow(_ mark: ProviderMark, name: String, detail: String) -> NSView {
+    private func makeToolRow(_ mark: ProviderMark, name: String, detail: String, quotas: [QuotaColumn] = []) -> NSView {
         let names = UI.column([UI.label(name, weight: .semibold), UI.label(detail, size: 11.5, color: .secondaryLabelColor)], spacing: 1)
         UI.flexible(names)
-        let row = UI.row([TileView(mark: mark), names])
-        row.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
+        var parts: [NSView] = [TileView(mark: mark), names] + quotas
+        if !quotas.isEmpty { parts.append(UI.gap(width: UI.actionWidth)) }
+        let row = UI.row(parts)
+        row.edgeInsets = UI.insets()
+        UI.fix(row, height: UI.rowHeight)
         return row
     }
 
@@ -279,21 +308,15 @@ final class PopoverContentView: NSStackView {
 
     private func makeCodexRow(_ reading: CodexReading, showLeft: Bool, now: Date) -> NSView {
         let model = CodexRowModel.make(reading, showLeft: showLeft, now: now)
-        let names = UI.column([UI.label("Codex", weight: .semibold), UI.label(model.detail, size: 11.5, color: .secondaryLabelColor)], spacing: 1)
-        UI.flexible(names)
         let primary = QuotaColumn(), secondary = QuotaColumn()
         primary.set(model.fiveHour, spoken: QuotaColumn.spoken(owner: "Codex", window: "5 hour", cell: model.fiveHour, showLeft: showLeft))
         secondary.set(model.week, spoken: QuotaColumn.spoken(owner: "Codex", window: "weekly", cell: model.week, showLeft: showLeft))
-        let gap = NSView()
-        UI.fix(gap, width: 28, height: 1)
-        let row = UI.row([TileView(mark: .openAI), names, primary, secondary, gap])
-        row.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
-        return row
+        return makeToolRow(.openAI, name: "Codex", detail: model.detail, quotas: [primary, secondary])
     }
 
     private func toggleSessions() {
         sessionsOpen.toggle()
-        sessionsButton.image = UI.symbol(sessionsOpen ? "chevron.down" : "chevron.right", size: 10, weight: .semibold)
+        sessionsToggle.image = UI.symbol(sessionsOpen ? "chevron.down" : "chevron.right", description: "Recent Sessions")
         sessionsCard.isHidden = !sessionsOpen
         if sessionsOpen { onShowSessions?() }
         onHeightChange?()

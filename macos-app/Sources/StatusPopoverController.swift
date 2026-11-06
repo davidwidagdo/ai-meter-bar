@@ -25,7 +25,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
     private let content = PopoverContentView()
     private let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: PopoverContentView.width, height: 400))
-    private static let maxHeight: CGFloat = 560
+    private static let screenMargin: CGFloat = 40
 
     private var portalState = PortalState.idle
     private var statusText = "Checking…"
@@ -113,7 +113,9 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
 
     private func resizePopover() {
         content.layoutSubtreeIfNeeded()
-        popover.contentSize = NSSize(width: PopoverContentView.width, height: min(content.fittingSize.height, Self.maxHeight))
+        let screen = statusItem.button?.window?.screen ?? NSScreen.main
+        let room = (screen?.visibleFrame.height ?? content.fittingSize.height) - Self.screenMargin
+        popover.contentSize = NSSize(width: PopoverContentView.width, height: min(content.fittingSize.height, room))
     }
 
     // MARK: - Inputs from the app
@@ -252,11 +254,12 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         let state = renderState()
         // Rebuilding the image is the costliest idle work, so skip it when nothing visible changed.
         let key = renderKey(state, columns)
+        let tip = tooltip()
+        if button.toolTip != tip { button.toolTip = tip }
         guard key != lastRenderKey else { return }
         lastRenderKey = key
         button.image = MenuBarRenderer.image(state: state, columns: columns)
         button.imagePosition = .imageOnly
-        button.toolTip = tooltip()
     }
 
     private func renderKey(_ state: MenuBarRenderer.State, _ columns: [MenuBarRenderer.Column]) -> String {
@@ -273,6 +276,13 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
     private func tooltip() -> String {
         let binary = Settings.shared.useBinaryUnits
         let today = AppMode.isDemo ? DemoData.today : UsageStore.shared.today
-        return "AI Meter Bar — \(statusText) · Today ↓ \(ByteFormatter.total(today.rx, binary: binary)) ↑ \(ByteFormatter.total(today.tx, binary: binary))"
+        let status = "AI Meter Bar — \(statusText) · Today ↓ \(ByteFormatter.total(today.rx, binary: binary)) ↑ \(ByteFormatter.total(today.tx, binary: binary))"
+        let settings = Settings.shared, now = Date()
+        let visible = snapshot.profiles.filter { !settings.hiddenProfiles.contains($0.folder) }
+        let profile = AISnapshot.active(visible).map { active in
+            ProfileRowModel.make(name: settings.alias(forFolder: active.folder) ?? active.name, usage: active.usage, running: active.isRunning, showLeft: true, now: now)
+        }
+        let codex = settings.showCodex ? snapshot.codex.map { CodexRowModel.make($0, showLeft: true, now: now) } : nil
+        return ([status] + AITooltip.lines(profile: profile, codex: codex)).joined(separator: "\n")
     }
 }

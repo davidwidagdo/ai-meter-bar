@@ -10,7 +10,7 @@ enum ProviderMark: CaseIterable {
         case .openAI:              return "#10A37F"
         case .antigravity:         return "#3B6FE0"
         case .copilot:             return "#6E40C9"
-        case .openCode, .cursor:   return "#3A3A40"
+        case .openCode, .cursor:   return "#5A5F6A"
         }
     }
 

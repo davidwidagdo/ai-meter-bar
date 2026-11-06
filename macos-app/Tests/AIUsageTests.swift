@@ -113,6 +113,9 @@ func testLiveParsers() {
     T.eq(model(0, passed).quotas.first?.reset, "Reset", "a passed reset is named")
     T.eq(AntigravityRowModel.make(AntigravityStatus(lastActive: now.addingTimeInterval(-60), model: "m"), showLeft: true, now: now).detail, "Last active 1m ago · m", "no live numbers")
 
+    T.eq(LastActive.line(now.addingTimeInterval(-13 * 3600), now: now), "Last active 13h ago", "tool row second line")
+    T.eq(LastActive.line(now, now: now), "Last active now", "tool row second line, just used")
+
     let stale = CodexReading(primary: CodexWindow(usedPercent: 5, windowMinutes: 300, resetsAt: now.addingTimeInterval(3600)),
                              secondary: CodexWindow(usedPercent: 17, windowMinutes: 10080, resetsAt: now.addingTimeInterval(86400)),
                              date: now.addingTimeInterval(-11 * 3600))
@@ -149,6 +152,9 @@ func testLocalTools() {
     let home = fm.temporaryDirectory.appendingPathComponent("ai-meter-tools-\(UUID().uuidString)")
     defer { try? fm.removeItem(at: home) }
     T.eq(LocalTools.read(home: home), [], "no tools on this Mac")
+    let copilotLogs = home.appendingPathComponent(".copilot/logs")
+    try? fm.createDirectory(at: copilotLogs, withIntermediateDirectories: true)
+    T.eq(LocalTools.read(home: home), [], "Copilot logs alone are not use")
     let db = home.appendingPathComponent(".local/share/opencode/opencode.db")
     try? fm.createDirectory(at: db.deletingLastPathComponent(), withIntermediateDirectories: true)
     try? Data().write(to: db)

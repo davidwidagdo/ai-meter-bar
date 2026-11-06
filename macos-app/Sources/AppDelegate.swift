@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setUpMeters()
         startMonitoring()
         startEventTriggers()
-        usageCoordinator.refresh()
+        usageCoordinator.refresh(live: true)
         syncUsageTimer()
     }
 
@@ -463,6 +463,7 @@ extension AppDelegate: StatusPopoverDelegate {
         // Someone clicking the menu bar proves the Mac is awake, whatever the sleep flag says.
         if systemAsleep { wakeUp() }
         usageCoordinator.refresh(live: true)
+        if !Settings.shared.autoLoginEnabled { refreshStatus() }
         systemMonitor.tick()
         startMeterClock()
     }

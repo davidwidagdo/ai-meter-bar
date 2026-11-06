@@ -19,16 +19,16 @@
 - **Other tools.** OpenCode, GitHub Copilot and Cursor show when they were last active, and appear when used in the last 30 days.
 - **Portal sign-in.** Signs in within seconds after a network change or wake.
 - **Meters.** Speed, today's usage, 30-day history, CPU, RAM and memory pressure.
-- **Light.** Live numbers are read only when you open the panel, nothing stays running for them, and nothing is drawn while the screen sleeps.
+- **Light.** Live numbers are read at launch and when you open the panel, nothing stays running for them, and nothing is drawn while the screen sleeps.
 
 ## How it works
 
-Claude's numbers come from a file Claude keeps. Codex and Antigravity answer live when the panel opens, and their files are the fallback:
+Claude's numbers come from a file Claude keeps. Codex and Antigravity answer live at launch and when the panel opens, and their files are the fallback:
 
 ```mermaid
 flowchart LR
   A[Claude usage files] --> M[Newest reading per account] --> E[Age rules]
-  P[Panel opens] --> B[Codex's own tool] --> E
+  P[Launch or panel opens] --> B[Codex's own tool] --> E
   P --> G[Antigravity's local server] --> E
   C[File dates of other tools] --> E
   E --> F[Menu bar and popover]
