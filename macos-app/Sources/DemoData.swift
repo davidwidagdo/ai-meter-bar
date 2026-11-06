@@ -3,15 +3,15 @@ import Foundation
 // Invented numbers for screenshots; nothing here comes from this Mac.
 enum DemoData {
     static func snapshot(now: Date) -> AISnapshot {
-        func reading(minutesAgo: Double, fiveHour: Double?, week: Double?) -> ClaudeUsageResult {
-            .reading(ClaudeUsageReading(date: now.addingTimeInterval(-minutesAgo * 60), fiveHourUsed: fiveHour, weekUsed: week))
+        func reading(minutesAgo: Double, fiveHour: Double?, week: Double?, account: String? = nil) -> ClaudeUsageResult {
+            .reading(ClaudeUsageReading(date: now.addingTimeInterval(-minutesAgo * 60), fiveHourUsed: fiveHour, weekUsed: week, account: account))
         }
         return AISnapshot(
             profiles: [
-                .init(folder: "Claude", name: "Default", usage: reading(minutesAgo: 12, fiveHour: 38, week: 43), isRunning: true),
+                .init(folder: "Claude", name: "Default", usage: reading(minutesAgo: 12, fiveHour: 38, week: 43, account: "demo"), isRunning: true),
                 .init(folder: "Claude-Max", name: "Max", usage: reading(minutesAgo: 180, fiveHour: nil, week: 29), isRunning: true),
                 .init(folder: "Claude-Work", name: "Work", usage: reading(minutesAgo: 360, fiveHour: 90, week: 75), isRunning: false),
-                .init(folder: "Claude-Studio", name: "Studio", usage: reading(minutesAgo: 12, fiveHour: 38, week: 43), isRunning: false),
+                .init(folder: "Claude-Studio", name: "Studio", usage: reading(minutesAgo: 12, fiveHour: 38, week: 43, account: "demo"), isRunning: false),
             ],
             codex: CodexReading(primary: CodexWindow(usedPercent: 18, windowMinutes: 300, resetsAt: now.addingTimeInterval(3600)),
                                 secondary: CodexWindow(usedPercent: 41, windowMinutes: 10080, resetsAt: now.addingTimeInterval(4 * 86400)),

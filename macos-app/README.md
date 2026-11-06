@@ -21,10 +21,11 @@ Developer notes. See the [main README](../README.md) for what the app does.
 
 ## Behavior worth knowing
 
-- **Live numbers.** When the panel opens, at most every 30 seconds. Codex: runs `codex app-server` from a fixed path, asks for rate limits, and ends it. Antigravity: finds its `language_server`, takes the session value from that process's arguments, and posts to the loopback ports that process owns, with no redirects. The value is never stored or logged, and the account fields in the reply are not read.
+- **Live numbers.** At launch and when the panel opens, at most every 30 seconds. Codex: runs `codex app-server` from a fixed path, asks for rate limits, and ends it. Antigravity: finds its `language_server`, takes the session value from that process's arguments, and posts to the loopback ports that process owns, with no redirects. The value is never stored or logged, and the account fields in the reply are not read.
 - **Accounts.** Each usage sample names its account. Folders on one account show its newest reading, and the account ID is never shown or logged.
 - **Move to Trash.** Settings, Accounts, the row's menu. Never Default or a running profile, and only a launcher this app built goes with it.
-- **Sign-in results. A login only counts as failed when the portal still asks for credentials. No evidence, or a sleep during the check, means check again.
+- **Auto-login off.** Nothing signs in by itself, so the panel offers Sign in Now whenever the Mac is offline.
+- **Sign-in results.** A login only counts as failed when the portal still asks for credentials. No evidence, or a sleep during the check, means check again.
 - **Sleep.** Automatic checks stop while the Mac sleeps, including dark wakes. Locking the screen does not stop them.
 - **After a rejection.** Automatic attempts wait 1, 5, then 15 minutes. Sign in Now and saving Settings clear the wait.
 - **Login URL.** Without one, a form goes only to the Wi-Fi gateway, and only once a Portal marker matches. One that points at this Mac is refused.

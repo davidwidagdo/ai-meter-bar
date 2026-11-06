@@ -131,6 +131,9 @@ func testProfileTrash() {
     launcher("My Team", identifier: ProfileNames.launcherIdentifier("My Team"))
     moved = []
     T.eq(ClaudeLauncher.moveToTrash(name: "My-Team", in: apps) { moved.append($0.lastPathComponent) }, true, "a multi-word launcher is found from its folder name")
+    launcher("My Crew", identifier: ProfileNames.launcherIdentifier("My Crew"))
+    T.eq(ClaudeLauncher.exists(name: "My-Crew", in: apps), true, "a multi-word launcher counts as built")
+    T.eq(ClaudeLauncher.exists(name: "Nobody", in: apps), false, "no launcher, none built")
     T.eq(moved, ["Claude - My Team.app"], "the multi-word launcher went")
 }
 
@@ -141,9 +144,17 @@ func testProfileRowModel() {
     }
     let weeklyOnly = model(.reading(ClaudeUsageReading(date: now.addingTimeInterval(-720), fiveHourUsed: nil, weekUsed: 20)), running: true)
     T.eq(weeklyOnly.fiveHour, .noFiveHour, "no 5h value is named, not shown as a failure")
-    T.eq(weeklyOnly.fiveHour.hidesMeter, true, "no 5h has no bar")
+    T.eq(weeklyOnly.fiveHour.notReported, true, "no 5h is named as not reported")
     T.eq(weeklyOnly.week.text, "80%", "weekly value still shows")
     T.eq(ProfileRowModel.menuBarValue(fiveHour: weeklyOnly.fiveHour, week: weeklyOnly.week), "80%", "menu bar falls back to weekly")
+    let shared = ProfileRowModel.make(name: "Second", usage: .reading(ClaudeUsageReading(date: now.addingTimeInterval(-720), fiveHourUsed: 10, weekUsed: 20)), running: false, showLeft: true, now: now, sameAccountAs: "First")
+    T.eq(shared.status, "Same as First", "a shared account is named")
+    T.eq(AITooltip.lines(profile: weeklyOnly, codex: nil), ["Max: week 80% left"], "tooltip names the profile and window")
+    let both = model(.reading(ClaudeUsageReading(date: now.addingTimeInterval(-60), fiveHourUsed: 40, weekUsed: 20)), running: true)
+    T.eq(AITooltip.lines(profile: both, codex: nil), ["Max: 5h 60% left, week 80% left"], "tooltip lists both windows")
+    let codexRow = CodexRowModel.make(CodexReading(primary: CodexWindow(usedPercent: 34, windowMinutes: 300, resetsAt: nil), secondary: nil), showLeft: true, now: now)
+    T.eq(AITooltip.lines(profile: nil, codex: codexRow), ["Codex: 5h 66% left"], "tooltip covers Codex")
+    T.eq(AITooltip.lines(profile: nil, codex: nil), [], "tooltip without readings")
     let neither = model(.reading(ClaudeUsageReading(date: now.addingTimeInterval(-720), fiveHourUsed: nil, weekUsed: nil)), running: true)
     T.eq(neither.fiveHour.text, "—", "nothing reported stays unknown")
     let fresh = ClaudeUsageReading(date: now.addingTimeInterval(-720), fiveHourUsed: 38, weekUsed: 43)

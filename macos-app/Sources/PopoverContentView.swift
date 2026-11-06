@@ -12,6 +12,8 @@ final class ProfileRowView: NSStackView {
         let name = UI.label(model.name, weight: .semibold)
         name.toolTip = model.name
         let status = UI.label(model.status, size: 11.5, color: .secondaryLabelColor)
+        status.lineBreakMode = .byTruncatingTail
+        status.toolTip = model.sameAccountAs.map { "Same account as \($0)" }
         let names = UI.column([name, UI.row([StatusDot(filled: model.isRunning), status], spacing: 5)], spacing: 1)
         UI.flexible(names)
 
@@ -141,13 +143,15 @@ final class PopoverContentView: NSStackView {
         return header
     }
 
+    private let alertText = UI.label("Captive portal detected", weight: .medium)
+
     private func makeAlertCard() -> CardView {
         let icon = NSImageView(image: UI.symbol("exclamationmark.triangle", description: "Warning") ?? NSImage())
         icon.contentTintColor = UI.warn
-        let text = UI.label("Captive portal detected", weight: .medium)
-        UI.flexible(text)
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        UI.flexible(alertText)
         let button = ClosureButton(title: "Sign in Now") { [weak self] in self?.onSignIn?() }
-        return CardView(UI.row([icon, text, button]), padding: 8)
+        return CardView(UI.row([icon, alertText, button]), padding: 8)
     }
 
     private func makeProfilesHeader() -> NSView {
@@ -188,7 +192,9 @@ final class PopoverContentView: NSStackView {
         case .needsLogin: symbol = "wifi.exclamationmark"
         }
         statusIcon.image = UI.symbol(symbol, size: 15, weight: .medium)
-        let wantsAlert = state == .needsLogin && autoLogin
+        // With auto-login off nothing else can sign in, so the button stays while the Mac is offline.
+        let wantsAlert = state == .needsLogin || (state == .idle && !autoLogin)
+        alertText.stringValue = autoLogin ? "Captive portal detected" : "Auto-login is off"
         if alertCard.isHidden == wantsAlert {
             alertCard.isHidden = !wantsAlert
             onHeightChange?()
@@ -213,9 +219,15 @@ final class PopoverContentView: NSStackView {
         weekHeader.stringValue = showLeft ? "Week left" : "Week used"
 
         profileRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        var firstOnAccount: [String: String] = [:]
         for profile in snapshot.profiles where !settings.hiddenProfiles.contains(profile.folder) {
             let name = settings.alias(forFolder: profile.folder) ?? profile.name
-            let model = ProfileRowModel.make(name: name, usage: profile.usage, running: profile.isRunning, showLeft: showLeft, now: now)
+            var sameAs: String?
+            if case .reading(let reading) = profile.usage, let account = reading.account {
+                sameAs = firstOnAccount[account]
+                if sameAs == nil { firstOnAccount[account] = name }
+            }
+            let model = ProfileRowModel.make(name: name, usage: profile.usage, running: profile.isRunning, showLeft: showLeft, now: now, sameAccountAs: sameAs)
             let folder = profile.folder
             let row = ProfileRowView(model: model, letter: Monogram.letter(for: name), hex: settings.tint(forFolder: folder), showLeft: showLeft) { [weak self] in
                 self?.onOpenProfile?(folder)
@@ -234,11 +246,13 @@ final class PopoverContentView: NSStackView {
         }
         if settings.showAntigravity, let antigravity = snapshot.antigravity {
             let model = AntigravityRowModel.make(antigravity, showLeft: showLeft, now: now)
-            addOtherRow(makeActivityRow(.antigravity, name: "Antigravity", detail: model.detail))
+            addOtherRow(model.quotas.isEmpty
+                ? makeCompactRow(.antigravity, name: "Antigravity", detail: model.detail)
+                : makeActivityRow(.antigravity, name: "Antigravity", detail: model.detail))
             for quota in model.quotas { addOtherRow(makeQuotaRow(quota, showLeft: showLeft)) }
         }
         for status in snapshot.tools where status.isRecent(now: now) && !settings.hiddenTools.contains(status.tool.rawValue) {
-            addOtherRow(makeActivityRow(status.tool.mark, name: status.tool.displayName, detail: LastActive.text(status.lastActive, now: now)))
+            addOtherRow(makeCompactRow(status.tool.mark, name: status.tool.displayName, detail: LastActive.ago(status.lastActive, now: now)))
         }
         otherCard.isHidden = otherRows.arrangedSubviews.isEmpty
         emptyLabel.isHidden = !(profileRows.arrangedSubviews.isEmpty && otherRows.arrangedSubviews.isEmpty)
@@ -260,6 +274,21 @@ final class PopoverContentView: NSStackView {
         UI.fix(endGap, width: 28, height: 1)
         let row = UI.row([tileGap, name, reset, column, endGap])
         row.edgeInsets = NSEdgeInsets(top: 3, left: 6, bottom: 3, right: 6)
+        return row
+    }
+
+    private func makeCompactRow(_ mark: ProviderMark, name: String, detail: String) -> NSView {
+        let label = UI.label(name, size: 12.5, weight: .medium)
+        UI.flexible(label)
+        let value = UI.label(detail, size: 11.5, color: .secondaryLabelColor)
+        value.lineBreakMode = .byTruncatingTail
+        value.alignment = .right
+        value.toolTip = "Last active \(detail)"
+        // The insets put the smaller tile's name in line with the full rows above.
+        let row = UI.row([TileView(mark: mark, size: 20), label, value], spacing: 15)
+        row.edgeInsets = NSEdgeInsets(top: 3, left: 11, bottom: 3, right: 6)
+        row.setAccessibilityElement(true)
+        row.setAccessibilityLabel("\(name), last active \(detail)")
         return row
     }
 

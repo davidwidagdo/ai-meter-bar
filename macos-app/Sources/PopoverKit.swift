@@ -190,14 +190,14 @@ final class QuotaColumn: NSStackView {
         case .critical: value.textColor = UI.critical
         }
         meter.cell = cell
-        meter.isHidden = cell.hidesMeter
+        meter.isHidden = cell.isUnknown
         setAccessibilityElement(true)
         setAccessibilityRole(.levelIndicator)
         setAccessibilityLabel(spoken)
     }
 
     static func spoken(owner: String, window: String, cell: QuotaCell, showLeft: Bool) -> String {
-        if cell.hidesMeter { return "\(owner), \(window), not reported" }
+        if cell.notReported { return "\(owner), \(window), not reported" }
         guard !cell.isUnknown else { return "\(owner), \(window), unknown" }
         let number = cell.text.replacingOccurrences(of: "~", with: "about ").replacingOccurrences(of: "%", with: " percent")
         return "\(owner), \(window), \(number) \(showLeft ? "left" : "used")"

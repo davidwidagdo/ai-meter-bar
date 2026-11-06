@@ -93,10 +93,10 @@ struct QuotaCell: Equatable {
     let level: QuotaLevel
     let isStale: Bool
     let isUnknown: Bool
-    var hidesMeter = false
+    var notReported = false
 
     static let unknown = QuotaCell(text: "—", fraction: 0, level: .normal, isStale: false, isUnknown: true)
-    static let noFiveHour = QuotaCell(text: "No 5h", fraction: 0, level: .normal, isStale: false, isUnknown: true, hidesMeter: true)
+    static let noFiveHour = QuotaCell(text: "No 5h", fraction: 0, level: .normal, isStale: false, isUnknown: true, notReported: true)
 
     static func make(used: Double?, freshness: Freshness, showLeft: Bool) -> QuotaCell {
         guard let used = used, used.isFinite, freshness != .expired else { return unknown }
@@ -118,11 +118,12 @@ struct ProfileRowModel: Equatable {
     let status: String
     let isRunning: Bool
     let hasUsage: Bool
+    var sameAccountAs: String?
     let fiveHour: QuotaCell
     let week: QuotaCell
     let action: ProfileAction
 
-    static func make(name: String, usage: ClaudeUsageResult, running: Bool, showLeft: Bool, now: Date) -> ProfileRowModel {
+    static func make(name: String, usage: ClaudeUsageResult, running: Bool, showLeft: Bool, now: Date, sameAccountAs: String? = nil) -> ProfileRowModel {
         var fiveHour = QuotaCell.unknown, week = QuotaCell.unknown
         var status = "Usage unavailable"
         var hasUsage = false
@@ -137,11 +138,11 @@ struct ProfileRowModel: Equatable {
                 ? .noFiveHour
                 : .make(used: r.fiveHourUsed, freshness: QuotaMath.fiveHourFreshness(age: age), showLeft: showLeft)
             week = .make(used: r.weekUsed, freshness: QuotaMath.weekFreshness(age: age), showLeft: showLeft)
-            let elapsed = RelativeAge.short(age)
-            status = "\(running ? "Running" : "Closed") · \(elapsed == "now" ? "now" : "\(elapsed) ago")"
+            // The row it matches already shows this age, and the width only fits the name.
+            status = sameAccountAs.map { "Same as \($0)" } ?? "\(running ? "Running" : "Closed") · \(LastActive.ago(r.date, now: now))"
             hasUsage = true
         }
-        return ProfileRowModel(name: name, status: status, isRunning: running, hasUsage: hasUsage,
+        return ProfileRowModel(name: name, status: status, isRunning: running, hasUsage: hasUsage, sameAccountAs: sameAccountAs,
                                fiveHour: fiveHour, week: week, action: running ? .bringToFront : .open)
     }
 
@@ -239,12 +240,11 @@ struct AntigravityRowModel: Equatable {
 
     static func make(_ status: AntigravityStatus, showLeft: Bool, now: Date) -> AntigravityRowModel {
         guard let live = status.live else {
-            var detail = LastActive.text(status.lastActive, now: now)
+            var detail = LastActive.ago(status.lastActive, now: now)
             if let model = status.model { detail += " · \(model)" }
             return AntigravityRowModel(detail: detail, quotas: [])
         }
-        let elapsed = RelativeAge.short(now.timeIntervalSince(live.date))
-        let age = elapsed == "now" ? "now" : "\(elapsed) ago"
+        let age = LastActive.ago(live.date, now: now)
         let freshness = QuotaMath.fiveHourFreshness(age: now.timeIntervalSince(live.date))
         let quotas = live.quotas.map { quota -> Quota in
             let passed = quota.resetsAt.map { $0 <= now } ?? false
@@ -259,9 +259,25 @@ struct AntigravityRowModel: Equatable {
 }
 
 enum LastActive {
-    static func text(_ date: Date, now: Date) -> String {
+    static func ago(_ date: Date, now: Date) -> String {
         let elapsed = RelativeAge.short(now.timeIntervalSince(date))
-        return "Last active \(elapsed == "now" ? "now" : "\(elapsed) ago")"
+        return elapsed == "now" ? "now" : "\(elapsed) ago"
+    }
+}
+
+enum AITooltip {
+    private static func windows(fiveHour: QuotaCell, week: QuotaCell) -> String? {
+        var parts: [String] = []
+        if !fiveHour.isUnknown { parts.append("5h \(fiveHour.text) left") }
+        if !week.isUnknown { parts.append("week \(week.text) left") }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+
+    static func lines(profile: ProfileRowModel?, codex: CodexRowModel?) -> [String] {
+        var lines: [String] = []
+        if let profile = profile, let text = windows(fiveHour: profile.fiveHour, week: profile.week) { lines.append("\(profile.name): \(text)") }
+        if let codex = codex, let text = windows(fiveHour: codex.fiveHour, week: codex.week) { lines.append("Codex: \(text)") }
+        return lines
     }
 }
 
@@ -287,7 +303,8 @@ enum AITool: String, CaseIterable {
     var activityPaths: [String] {
         switch self {
         case .openCode: return [".local/share/opencode/opencode.db-wal", ".local/share/opencode/opencode.db", ".local/share/opencode/log"]
-        case .copilot:  return [".copilot/session-state", ".copilot/logs", ".copilot/ide", ".copilot"]
+        // Logs and IDE locks change whenever Copilot merely starts, so they say nothing about use.
+        case .copilot:  return [".copilot/session-state", "Library/Application Support/Code/User/globalStorage/github.copilot-chat"]
         case .cursor:   return ["Library/Application Support/Cursor/User/globalStorage/state.vscdb", ".cursor"]
         }
     }

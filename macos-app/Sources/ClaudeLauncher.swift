@@ -16,21 +16,26 @@ enum ClaudeLauncher {
 
     static func exists(name: String, in directory: URL = defaultDirectory) -> Bool {
         FileManager.default.fileExists(atPath: directory.appendingPathComponent(ProfileNames.launcherName(name)).path)
+            || built(name: name, in: directory) != nil
+    }
+
+    // A multi-word launcher keeps its spaces while the folder has hyphens, so the identifier decides.
+    private static func built(name: String, in directory: URL) -> URL? {
+        let wanted = ProfileNames.launcherIdentifier(name)
+        let apps = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        return apps.first { url in
+            guard url.pathExtension == "app", url.lastPathComponent.hasPrefix("Claude - "),
+                  let data = try? Data(contentsOf: url.appendingPathComponent("Contents/Info.plist")),
+                  let info = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] else { return false }
+            return info["CFBundleIdentifier"] as? String == wanted
+        }
     }
 
     // Only a launcher this app built goes; another app with the same name stays.
     @discardableResult
     static func moveToTrash(name: String, in directory: URL = defaultDirectory,
                             trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) -> Bool {
-        let wanted = ProfileNames.launcherIdentifier(name)
-        let apps = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        // A multi-word launcher keeps its spaces while the folder has hyphens, so the identifier decides.
-        guard let app = apps.first(where: { url in
-            guard url.pathExtension == "app", url.lastPathComponent.hasPrefix("Claude - "),
-                  let data = try? Data(contentsOf: url.appendingPathComponent("Contents/Info.plist")),
-                  let info = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] else { return false }
-            return info["CFBundleIdentifier"] as? String == wanted
-        }) else { return false }
+        guard let app = built(name: name, in: directory) else { return false }
         return (try? trash(app)) != nil
     }
 
