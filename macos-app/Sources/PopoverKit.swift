@@ -1,6 +1,19 @@
 import Cocoa
 
 enum UI {
+    // Every card's rows share these, so tiles, names and actions line up down the panel.
+    static let tileSize: CGFloat = 30
+    static let rowHeight: CGFloat = 40
+    static let subRowHeight: CGFloat = 30
+    static let actionWidth: CGFloat = 28
+    static let cardPadding: CGFloat = 8
+    static let rowSide: CGFloat = 6
+    static let panelInset = cardPadding + rowSide
+
+    static func insets(vertical: CGFloat = 0) -> NSEdgeInsets {
+        NSEdgeInsets(top: vertical, left: rowSide, bottom: vertical, right: rowSide)
+    }
+
     static let warn = dynamic(light: 0x8A3D07, dark: 0xFFA94D)
     static let critical = dynamic(light: 0x9B1C13, dark: 0xFFA39B)
     static let ok = dynamic(light: 0x14602F, dark: 0x5FD38A)
@@ -28,6 +41,10 @@ enum UI {
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
         return label
+    }
+
+    static func sectionTitle(_ text: String) -> NSTextField {
+        label(text, size: 12.5, weight: .semibold, color: .secondaryLabelColor)
     }
 
     static func wrappingLabel(_ text: String = "", size: CGFloat = 12, color: NSColor = .secondaryLabelColor, width: CGFloat) -> NSTextField {
@@ -72,6 +89,12 @@ enum UI {
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
 
+    static func gap(width: CGFloat) -> NSView {
+        let view = NSView()
+        fix(view, width: width, height: 1)
+        return view
+    }
+
     static func spacer() -> NSView {
         let view = NSView()
         flexible(view)
@@ -103,7 +126,7 @@ final class ClosureButton: NSButton {
         self.onClick = onClick
         target = self
         action = #selector(fire)
-        UI.fix(self, width: 28, height: 28)
+        UI.fix(self, width: UI.actionWidth, height: UI.actionWidth)
     }
 
     @objc private func fire() {
@@ -113,7 +136,10 @@ final class ClosureButton: NSButton {
 
 // Plain fill, not glass: Liquid Glass is for chrome and these cards hold dense text.
 final class CardView: NSView {
-    init(_ content: NSView, padding: CGFloat = 8) {
+    // Set when the card acts as one button, so its text and padding take the click too.
+    var clickTarget: NSButton?
+
+    init(_ content: NSView, padding: CGFloat = UI.cardPadding) {
         super.init(frame: .zero)
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
@@ -129,10 +155,22 @@ final class CardView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard clickTarget != nil else { return super.hitTest(point) }
+        return !isHidden && frame.contains(point) ? self : nil
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { clickTarget != nil }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let clickTarget else { return super.mouseDown(with: event) }
+        clickTarget.performClick(nil)
+    }
+
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.cornerRadius = 16
+        layer?.cornerRadius = 18
         layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor
     }
 }
@@ -147,9 +185,11 @@ final class MeterView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        // No bar for an empty value, but the slot stays so its text keeps the same line.
+        guard !cell.isUnknown else { return }
         NSColor.labelColor.withAlphaComponent(0.16).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 2.5, yRadius: 2.5).fill()
-        guard !cell.isUnknown, cell.fraction > 0 else { return }
+        guard cell.fraction > 0 else { return }
         let width = max(3, bounds.width * CGFloat(min(1, cell.fraction)))
         let color: NSColor
         switch cell.level {
@@ -190,7 +230,6 @@ final class QuotaColumn: NSStackView {
         case .critical: value.textColor = UI.critical
         }
         meter.cell = cell
-        meter.isHidden = cell.isUnknown
         setAccessibilityElement(true)
         setAccessibilityRole(.levelIndicator)
         setAccessibilityLabel(spoken)
@@ -230,21 +269,22 @@ final class StatusDot: NSView {
 }
 
 final class TileView: NSImageView {
-    init(letter: String, hex: String, size: CGFloat = 30) {
+    init(letter: String, hex: String) {
         super.init(frame: .zero)
-        image = Monogram.image(letter: letter, hex: hex, size: size)
-        imageScaling = .scaleNone
-        setAccessibilityElement(false)
-        UI.fix(self, width: size, height: size)
+        configure(Monogram.image(letter: letter, hex: hex, size: UI.tileSize))
     }
 
-    init(mark: ProviderMark, size: CGFloat = 30) {
+    init(mark: ProviderMark) {
         super.init(frame: .zero)
-        image = mark.tile(size: size)
-        imageScaling = .scaleNone
-        setAccessibilityElement(false)
-        UI.fix(self, width: size, height: size)
+        configure(mark.tile(size: UI.tileSize))
     }
 
     required init?(coder: NSCoder) { nil }
+
+    private func configure(_ tile: NSImage) {
+        image = tile
+        imageScaling = .scaleNone
+        setAccessibilityElement(false)
+        UI.fix(self, width: UI.tileSize, height: UI.tileSize)
+    }
 }

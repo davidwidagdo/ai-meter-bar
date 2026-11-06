@@ -240,7 +240,7 @@ struct AntigravityRowModel: Equatable {
 
     static func make(_ status: AntigravityStatus, showLeft: Bool, now: Date) -> AntigravityRowModel {
         guard let live = status.live else {
-            var detail = LastActive.ago(status.lastActive, now: now)
+            var detail = LastActive.line(status.lastActive, now: now)
             if let model = status.model { detail += " · \(model)" }
             return AntigravityRowModel(detail: detail, quotas: [])
         }
@@ -262,6 +262,10 @@ enum LastActive {
     static func ago(_ date: Date, now: Date) -> String {
         let elapsed = RelativeAge.short(now.timeIntervalSince(date))
         return elapsed == "now" ? "now" : "\(elapsed) ago"
+    }
+
+    static func line(_ date: Date, now: Date) -> String {
+        "Last active \(ago(date, now: now))"
     }
 }
 
