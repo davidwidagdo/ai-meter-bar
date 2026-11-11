@@ -18,6 +18,7 @@
 - **Claude profiles.** Open any profile in one click, create one with its own launcher and no Automator step, or move one to the Trash.
 - **Other tools.** OpenCode, GitHub Copilot and Cursor show when they were last active, and appear when used in the last 30 days.
 - **Portal sign-in.** Signs in within seconds after a network change or wake.
+- **VPN.** Connect or disconnect each VPN account from the panel, without opening the VPN app. The VPN app keeps its profiles and passwords.
 - **Meters.** Speed, today's usage, 30-day history, CPU, RAM and memory pressure.
 - **Light.** Live numbers are read at launch and when you open the panel, nothing stays running for them, and nothing is drawn while the screen sleeps.
 
@@ -69,7 +70,7 @@ Click the gauge in the menu bar. For portal sign-in, open **Settings**, choose *
 | --- | --- |
 | **Accounts** | Quota as left or used, profile names and colors, what appears, launchers |
 | **Portal** | Auto-login, sign-in details, portal marker, and **Diagnose**, which checks the values as typed and sends nothing |
-| **General** | Menu bar content, update intervals, units, Wi-Fi interface, start at login |
+| **General** | Menu bar content, update intervals, units, Wi-Fi interface, Show VPN in panel, start at login |
 
 ## Scripts
 
@@ -93,6 +94,7 @@ Click the gauge in the menu bar. For portal sign-in, open **Settings**, choose *
 - Antigravity's quota needs the app to be open, and its local server is not a public interface, so an update could change it.
 - An account that reports only a weekly value shows **No 5h**.
 - Separate profiles rely on Claude's `--user-data-dir` option, which an update could change.
+- VPN control lists only VPNs macOS knows, those under System Settings, VPN. OpenVPN Connect is there from version 3.9; older versions do not show.
 - MikroTik CHAP portals are not supported. **Diagnose** tells you if a page looks like one.
 - Builds are ad-hoc signed unless you set `CODESIGN_IDENTITY`, so each rebuild asks once for Keychain access.
 

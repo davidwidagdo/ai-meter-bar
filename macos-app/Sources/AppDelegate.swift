@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var newProfileWC: NewProfileWindowController?
 
     private let statusController = StatusPopoverController()
+    private let vpn = VPNController()
     private let usageCoordinator = AIUsageCoordinator()
     private var usageTimer: Timer?
     private static let usageRefreshInterval: TimeInterval = 60
@@ -54,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusController.delegate = self
         statusController.install()
         usageCoordinator.onUpdate = { [weak self] snapshot in self?.statusController.setSnapshot(snapshot) }
+        statusController.vpnRows = { [weak self] in self?.vpn.rows(now: Date()) ?? [] }
+        vpn.onChange = { [weak self] in self?.statusController.vpnChanged() }
+        vpn.refresh()
         if AppMode.isDemo {
             showDemoData()
             return
@@ -211,6 +215,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func wakeUp() {
         systemAsleep = false
         lastSignature = nil
+        // Events can be missed in sleep, so every VPN's state is read again.
+        vpn.refresh()
         triggerCheck(reason: "system woke")
     }
 
@@ -493,6 +499,7 @@ extension AppDelegate: StatusPopoverDelegate {
         // Someone clicking the menu bar proves the Mac is awake, whatever the sleep flag says.
         if systemAsleep { wakeUp() }
         usageCoordinator.refresh(live: true)
+        vpn.refresh()
         if !Settings.shared.autoLoginEnabled { refreshStatus() }
         systemMonitor.tick()
         startMeterClock()
@@ -513,6 +520,10 @@ extension AppDelegate: StatusPopoverDelegate {
         guard !AppMode.isDemo else { return }
         Log.write("Manual login requested.")
         runCycle(manual: true)
+    }
+
+    func popoverVPNAction(id: String) {
+        vpn.perform(id: id)
     }
 
     func popoverOpenUsageHistory() {
@@ -566,10 +577,12 @@ extension AppDelegate: StatusPopoverDelegate {
         settingsWC?.onSave = { [weak self] in
             guard let self = self else { return }
             guard !AppMode.isDemo else {
+                self.vpn.refresh()
                 self.statusController.settingsChanged()
                 return
             }
             Log.write("Settings updated.")
+            self.vpn.refresh()
             self.throttles.removeAll()
             self.startMonitoring()
             self.restartMeters()

@@ -40,5 +40,9 @@ enum DemoData {
          RecentSession(provider: "Codex", project: "sample-api", date: now.addingTimeInterval(-3600), tokens: 54_000)]
     }
 
+    static let vpnServices = [
+        VPNService(id: "00000000-0000-4000-8000-000000000001", name: "Office", provider: nil, status: .connected),
+        VPNService(id: "00000000-0000-4000-8000-000000000002", name: "Home Server", provider: nil, status: .off),
+    ]
     static let today = DayUsage(day: "demo", rx: 1_800_000_000, tx: 240_000_000, peakDown: 4_200_000, peakUp: 310_000)
 }

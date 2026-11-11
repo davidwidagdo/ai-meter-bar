@@ -51,6 +51,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let binaryCheck = NSButton(checkboxWithTitle: "Use binary units (1024 / KiB)", target: nil, action: nil)
     private let interfacePopup = NSPopUpButton()
     private let startAtLoginCheck = NSButton(checkboxWithTitle: "Start at Login", target: nil, action: nil)
+    private let showVPNCheck = NSButton(checkboxWithTitle: "Show VPN in panel", target: nil, action: nil)
 
     // Wiring back to AppDelegate.
     var onSave: (() -> Void)?
@@ -456,6 +457,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             [label("CPU and RAM interval:"), systemIntervalPopup],
             [NSGridCell.emptyContentView, binaryCheck],
             [label("Wi-Fi interface:"), interfacePopup],
+            [NSGridCell.emptyContentView, showVPNCheck],
             [NSGridCell.emptyContentView, startAtLoginCheck],
             [label("Usage:"), UI.row([history, resetButton], spacing: 8)],
             [label("Troubleshooting:"), logButton],
@@ -606,6 +608,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             interfacePopup.selectItem(at: idx ?? 0)
         }
         startAtLoginCheck.state = isLoginItemEnabled() ? .on : .off
+        showVPNCheck.state = s.showVPN ? .on : .off
 
         fitWindowToCurrentContent(animate: false)
         if tabView.selectedTabViewItem?.identifier as? String == portalTabIdentifier { loadPasswordAsync() }
@@ -641,6 +644,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         s.systemInterval = intervalOptions[safe: systemIntervalPopup.indexOfSelectedItem] ?? 2
         s.useBinaryUnits = binaryCheck.state == .on
         s.wifiInterfaceOverride = (interfacePopup.selectedItem?.representedObject as? String) ?? ""
+        s.showVPN = showVPNCheck.state == .on
         setLoginItem(startAtLoginCheck.state == .on)
 
         // A Keychain prompt blocks its caller, so the write stays off the main thread.

@@ -15,12 +15,15 @@ protocol StatusPopoverDelegate: AnyObject {
     func popoverNewProfile()
     func popoverOpenProfile(folder: String)
     func popoverShowSessions()
+    func popoverVPNAction(id: String)
 }
 
 // Owns the status item, its image and the popover; AppDelegate keeps the login cycle.
 final class StatusPopoverController: NSObject, NSPopoverDelegate {
     weak var delegate: StatusPopoverDelegate?
     private(set) var isOpen = false
+    // Read when shown, so a connection's age is current each time the panel opens.
+    var vpnRows: () -> [VPNPanelRow] = { [] }
 
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
@@ -74,6 +77,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         content.onSignIn = { [weak self] in self?.delegate?.popoverSignIn() }
         content.onOpenProfile = { [weak self] folder in self?.closeThen { $0.popoverOpenProfile(folder: folder) } }
         content.onShowSessions = { [weak self] in self?.delegate?.popoverShowSessions() }
+        content.onVPNAction = { [weak self] id in self?.delegate?.popoverVPNAction(id: id) }
         content.onHeightChange = { [weak self] in self?.resizePopover() }
         content.onActivityMonitor = { Self.openActivityMonitor() }
     }
@@ -157,6 +161,12 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         if isOpen { content.setSnapshot(snapshot, settings: .shared, now: Date()) }
     }
 
+    func vpnChanged() {
+        guard isOpen else { return }
+        content.setVPN(vpnRows())
+        resizePopover()
+    }
+
     func setSessions(_ sessions: [RecentSession]) {
         content.setSessions(sessions, binary: Settings.shared.useBinaryUnits, now: Date())
     }
@@ -173,6 +183,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         syncStatus()
         syncSpeed()
         syncSystem()
+        content.setVPN(vpnRows())
         content.setSnapshot(snapshot, settings: .shared, now: Date())
     }
 
