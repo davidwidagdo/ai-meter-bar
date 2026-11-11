@@ -56,6 +56,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     // Wiring back to AppDelegate.
     var onSave: (() -> Void)?
+    var onSaveStarted: (() -> Void)?
     var isLoginItemEnabled: () -> Bool = { false }
     var setLoginItem: (Bool) -> Void = { _ in }
     var onNewProfile: (() -> Void)?
@@ -576,7 +577,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         passwordField.placeholderString = "Loading…"
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let stored = Settings.shared.password
+            let stored = Settings.shared.portalSecret?.password ?? ""
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.passwordField.placeholderString = nil
@@ -657,15 +658,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         s.autoLoginEnabled = autoLoginCheck.state == .on
         s.pollInterval = Int(pollField.stringValue) ?? 15
-        s.loginURL = loginURLField.stringValue.trimmingCharacters(in: .whitespaces)
+        // Until the Keychain item is rewritten below, the new values and its binding disagree.
+        onSaveStarted?()
+        let loginURL = loginURLField.stringValue.trimmingCharacters(in: .whitespaces)
+        let marker = markerField.stringValue.trimmingCharacters(in: .whitespaces)
+        s.loginURL = loginURL
         s.username = usernameField.stringValue.trimmingCharacters(in: .whitespaces)
-        let newPassword = passwordEdited ? enteredPassword : nil
+        let typedPassword = passwordEdited ? enteredPassword : nil
+        // The Login URL and marker are on the Portal tab, so they changed only if it was shown.
+        let portalShown = passwordLoaded
         s.extraFields = extraField.stringValue
             .split(whereSeparator: { $0 == "," || $0 == "\n" })
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
-        s.portalMarker = markerField.stringValue.trimmingCharacters(in: .whitespaces)
+        s.portalMarker = marker
 
         s.menuBarMode = modes[safe: modePopup.indexOfSelectedItem] ?? s.menuBarMode
         s.speedInterval = intervalOptions[safe: intervalPopup.indexOfSelectedItem] ?? 2
@@ -682,12 +689,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             self?.onSave?()
             self?.window?.close()
         }
-        guard let password = newPassword else {
+        guard !AppMode.isDemo, typedPassword != nil || portalShown else {
             finish()
             return
         }
         DispatchQueue.global(qos: .userInitiated).async {
-            Settings.shared.password = password
+            // Rewritten when the password or its destination changed, so the two stay bound.
+            if let next = PortalSecret.forSave(typed: typedPassword, stored: Keychain.secret(), loginURL: loginURL, marker: marker) {
+                Keychain.save(next)
+            }
             DispatchQueue.main.async(execute: finish)
         }
     }

@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var isBusy = false
     private var pendingManual = false
+    private var savingSettings = false
     private var runningManual = false
     private var sawCaptivity = false
     private var lastRouter: String?
@@ -272,7 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkAndLogin() {
-        guard !systemAsleep else { return }
+        guard !systemAsleep, !savingSettings else { return }
         guard Settings.shared.autoLoginEnabled else {
             refreshStatus()
             return
@@ -326,6 +327,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             Log.write(manual ? "Manual login: \(detail) — nothing to do." : "No internet, \(detail) — skipping.")
                             self.finishCycle()
                             self.scheduleQuickRetry()
+                            return
+                        }
+                        // A page that came over a VPN or another link is not this Wi-Fi's portal.
+                        guard page.overWiFi != false else {
+                            self.statusController.setStatus(.idle, "Portal page is not on Wi-Fi")
+                            Log.write("Portal page did not arrive over Wi-Fi; nothing sent.")
+                            self.finishCycle()
                             return
                         }
                         guard self.throttle.allowsAttempt(now: Date()) else {
@@ -575,8 +583,10 @@ extension AppDelegate: StatusPopoverDelegate {
             }
             self?.client.diagnose(loginURL: loginURL, marker: marker, completion: completion)
         }
+        settingsWC?.onSaveStarted = { [weak self] in self?.savingSettings = true }
         settingsWC?.onSave = { [weak self] in
             guard let self = self else { return }
+            self.savingSettings = false
             guard !AppMode.isDemo else {
                 self.vpn.refresh()
                 self.statusController.settingsChanged()

@@ -5,6 +5,7 @@ private final class LineReader: @unchecked Sendable {
     private let done = DispatchSemaphore(value: 0)
     private var buffer = Data()
     private var result: CodexReading?
+    private var replied = false
     private var finished = false
     private let now: Date
     private let maxBytes = 1_000_000
@@ -29,6 +30,7 @@ private final class LineReader: @unchecked Sendable {
                 return
             }
             if CodexAppServerParser.isReply(line) {
+                replied = CodexAppServerParser.isEmptyResult(line)
                 finish()
                 return
             }
@@ -40,11 +42,12 @@ private final class LineReader: @unchecked Sendable {
         done.signal()
     }
 
-    func wait(timeout: TimeInterval) -> CodexReading? {
+    func wait(timeout: TimeInterval) -> LiveRead<CodexReading> {
         _ = done.wait(timeout: .now() + timeout)
         lock.lock()
         defer { lock.unlock() }
-        return result
+        if let result = result { return .reading(result) }
+        return replied ? .empty : .unavailable
     }
 }
 
@@ -58,8 +61,8 @@ enum CodexAppServer {
     ]
     private static let timeout: TimeInterval = 8
 
-    static func read(now: Date = Date()) -> CodexReading? {
-        guard let path = candidates.first(where: FileManager.default.isExecutableFile(atPath:)) else { return nil }
+    static func read(now: Date = Date()) -> LiveRead<CodexReading> {
+        guard let path = candidates.first(where: FileManager.default.isExecutableFile(atPath:)) else { return .unavailable }
         let process = Process(), input = Pipe(), output = Pipe()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = ["app-server"]
@@ -77,7 +80,7 @@ enum CodexAppServer {
         output.fileHandleForReading.readabilityHandler = { reader.consume($0.availableData) }
         guard (try? process.run()) != nil else {
             output.fileHandleForReading.readabilityHandler = nil
-            return nil
+            return .unavailable
         }
         // A tool that exits early must not take this app down with SIGPIPE.
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
@@ -101,13 +104,27 @@ enum AntigravityServer {
     private static let route = "/exa.language_server_pb.LanguageServerService/GetUserStatus"
     private static let maxBytes = 4_000_000
 
-    static func read(now: Date = Date()) -> AntigravityLive? {
-        guard let pid = serverPID(), let token = ProcessArgs.value(of: "--csrf_token", in: ProcessArgs.read(pid: pid)),
-              let listing = LocalCommand.output("/usr/sbin/lsof", ["-nP", "-a", "-p", "\(pid)", "-iTCP", "-sTCP:LISTEN", "-Fn"]) else { return nil }
+    static func read(now: Date = Date()) -> LiveRead<AntigravityLive> {
+        guard let pid = serverPID(), let started = startTime(pid),
+              let token = ProcessArgs.value(of: "--csrf_token", in: ProcessArgs.read(pid: pid)),
+              let listing = LocalCommand.output("/usr/sbin/lsof", ["-nP", "-a", "-p", "\(pid)", "-iTCP", "-sTCP:LISTEN", "-Fn"]) else { return .unavailable }
+        var answered = false
         for port in LoopbackPorts.parse(String(decoding: listing, as: UTF8.self)) {
-            if let live = request(port: port, token: token).flatMap({ AntigravityStatusParser.live(from: $0, now: now) }) { return live }
+            guard let data = request(port: port, token: token) else { continue }
+            // If the server ended meanwhile, another process may hold its port and have answered.
+            guard startTime(pid) == started else { return .unavailable }
+            if let live = AntigravityStatusParser.live(from: data, now: now) { return .reading(live) }
+            answered = true
         }
-        return nil
+        return answered ? .empty : .unavailable
+    }
+
+    // Tells one process from a later one with the same pid; another user's process is never asked.
+    private static func startTime(_ pid: pid_t) -> UInt64? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size, info.pbi_uid == getuid() else { return nil }
+        return info.pbi_start_tvsec &* 1_000_000 &+ info.pbi_start_tvusec
     }
 
     private static func serverPID() -> pid_t? {
@@ -133,13 +150,12 @@ enum AntigravityServer {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.connectionProxyDictionary = [:]
         configuration.timeoutIntervalForResource = 3
-        let session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
+        let fetcher = CappedFetcher(configuration: configuration)
+        defer { fetcher.invalidate() }
         let box = ReplyBox()
-        session.dataTask(with: request) { data, response, _ in
-            let ok = (response as? HTTPURLResponse)?.statusCode == 200 && (data?.count ?? 0) <= maxBytes
-            box.finish(ok ? data : nil)
-        }.resume()
+        fetcher.fetch(request, maxBytes: maxBytes) { result in
+            box.finish(result.status == 200 ? result.data : nil)
+        }
         return box.wait(timeout: 3)
     }
 }
@@ -198,7 +214,7 @@ struct LiveUsage {
 
     mutating func update() {
         // A hidden tool is not asked, so the bar handles no session value it will not show.
-        if Settings.shared.showCodex { codex = CodexAppServer.read() ?? codex }
-        if Settings.shared.showAntigravity { antigravity = AntigravityServer.read() ?? antigravity }
+        if Settings.shared.showCodex { codex = CodexAppServer.read().next(keeping: codex) }
+        if Settings.shared.showAntigravity { antigravity = AntigravityServer.read().next(keeping: antigravity) }
     }
 }

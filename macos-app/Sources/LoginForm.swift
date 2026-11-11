@@ -36,11 +36,14 @@ struct CaptivePage {
     let marker: String
     // Set only with a marker, when the gateway's own page led here, so the POST goes the same way.
     let route: String?
+    // false when the page came over another link, such as a VPN; nil when that is unknown.
+    let overWiFi: Bool?
     // Parsed where the page is fetched, so a hostile page cannot stall the main thread.
     let form: LoginForm?
     let isLoggedIn: Bool
 
-    init(url: URL?, html: String, hops: Int = 0, status: Int? = nil, gateway: String? = nil, marker: String = "", route: String? = nil) {
+    init(url: URL?, html: String, hops: Int = 0, status: Int? = nil, gateway: String? = nil, marker: String = "", route: String? = nil,
+         overWiFi: Bool? = nil) {
         self.url = url
         self.html = html
         self.hops = hops
@@ -48,6 +51,7 @@ struct CaptivePage {
         self.gateway = gateway
         self.marker = marker
         self.route = route
+        self.overWiFi = overWiFi
         form = LoginFormParser.parse(html: html)
         isLoggedIn = LoginFormParser.isSessionPage(html: html)
     }
@@ -70,6 +74,27 @@ enum PortalRoute {
               var parts = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return url }
         parts.host = target.host
         return parts.url ?? url
+    }
+}
+
+// Judged on the addresses a connection really used, since a name can point anywhere.
+enum PageOrigin {
+    static func bare(_ address: String) -> String {
+        var text = String(address.split(separator: "%").first ?? "").lowercased()
+        if text.hasPrefix("::ffff:"), text.dropFirst(7).contains(".") { text = String(text.dropFirst(7)) }
+        return text
+    }
+
+    // A page this Mac served itself is no portal, whatever name led to it.
+    static func isThisMac(remote: String?, ownAddresses: Set<String>) -> Bool {
+        guard let remote = remote.map(bare), !remote.isEmpty else { return false }
+        return LoopbackHost.matches(remote) || ownAddresses.contains(remote)
+    }
+
+    // nil when either side is unknown, which must not block a sign-in.
+    static func cameOverWiFi(local: String?, wifiAddresses: Set<String>?) -> Bool? {
+        guard let local = local.map(bare), !local.isEmpty, let wifi = wifiAddresses, !wifi.isEmpty else { return nil }
+        return wifi.contains(local)
     }
 }
 

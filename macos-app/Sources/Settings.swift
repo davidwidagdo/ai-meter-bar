@@ -83,9 +83,8 @@ final class Settings {
         set { defaults.set(newValue, forKey: Key.username) }
     }
 
-    var password: String {
-        get { AppMode.isDemo ? "" : Keychain.password() }
-        set { if !AppMode.isDemo { Keychain.setPassword(newValue) } }
+    var portalSecret: PortalSecret? {
+        AppMode.isDemo ? nil : Keychain.secret()
     }
 
     var pollInterval: Int {
