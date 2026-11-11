@@ -51,4 +51,6 @@ Developer notes. See the [main README](../README.md) for what the app does.
 
 **Interface**
 - **Panel grid.** `UI` holds the tile, row and action sizes, so columns line up from the header to Recent Sessions.
+- **Meters.** One update interval drives speed, CPU and RAM; in Low Power Mode it is 5 s. Redrawing the menu bar item is the app's main steady cost, so the interval is the lever.
+- **Refresh.** Profile and VPN rows update in place; the refresh button is a spinner while a read runs. Settings and Usage History are released when closed.
 - **Move to Trash.** Never Default or a running profile, and only a launcher this app built goes with it.

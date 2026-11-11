@@ -1,17 +1,18 @@
 import Foundation
 
 enum MeterSchedule {
-    static func baseInterval(speed: Int, system: Int?) -> Int {
-        guard let system = system else { return speed }
-        return greatestCommonDivisor(speed, system)
+    static let options = [1, 2, 5]
+    static let lowPowerInterval = 5
+
+    // Low Power Mode asks apps to do less, so the meters slow down by themselves.
+    static func interval(setting: Int, lowPower: Bool) -> Int {
+        lowPower ? max(setting, lowPowerInterval) : setting
     }
 
-    static func isDue(tick: Int, every: Int, base: Int) -> Bool {
-        tick % max(1, every / max(1, base)) == 0
-    }
-
-    private static func greatestCommonDivisor(_ a: Int, _ b: Int) -> Int {
-        b == 0 ? a : greatestCommonDivisor(b, a % b)
+    // One interval replaced two: the faster of the old pair keeps what the user saw.
+    static func migrated(speed: Int?, system: Int?) -> Int {
+        let old = [speed, system].compactMap { $0 }.filter(options.contains)
+        return old.min() ?? 2
     }
 }
 

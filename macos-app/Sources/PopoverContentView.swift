@@ -1,7 +1,18 @@
 import Cocoa
 
 final class ProfileRowView: NSStackView {
-    init(model: ProfileRowModel, letter: String, hex: String, showLeft: Bool, onAction: @escaping () -> Void) {
+    let folder: String
+    private let tile: TileView
+    private let name = UI.label("", weight: .semibold)
+    private let status = UI.label("", size: 11.5, color: .secondaryLabelColor)
+    private let dot = StatusDot(filled: false)
+    private let five = QuotaColumn(), week = QuotaColumn()
+    private let action: ClosureButton
+
+    init(folder: String, model: ProfileRowModel, letter: String, hex: String, showLeft: Bool, onAction: @escaping () -> Void) {
+        self.folder = folder
+        tile = TileView(letter: letter, hex: hex)
+        action = ClosureButton(symbol: "play", label: "", onClick: onAction)
         super.init(frame: .zero)
         orientation = .horizontal
         alignment = .centerY
@@ -9,29 +20,33 @@ final class ProfileRowView: NSStackView {
         spacing = 10
         edgeInsets = UI.insets()
         UI.fix(self, height: UI.rowHeight)
-
-        let name = UI.label(model.name, weight: .semibold)
-        name.toolTip = model.name
-        let status = UI.label(model.status, size: 11.5, color: .secondaryLabelColor)
         status.lineBreakMode = .byTruncatingTail
-        status.toolTip = model.sameAccountAs.map { "Same account as \($0)" }
-        let names = UI.column([name, UI.row([StatusDot(filled: model.isRunning), status], spacing: 5)], spacing: 1)
+        let names = UI.column([name, UI.row([dot, status], spacing: 5)], spacing: 1)
         UI.flexible(names)
-
-        let five = QuotaColumn(), week = QuotaColumn()
-        five.set(model.fiveHour, spoken: QuotaColumn.spoken(owner: model.name, window: "5 hour", cell: model.fiveHour, showLeft: showLeft))
-        week.set(model.week, spoken: QuotaColumn.spoken(owner: model.name, window: "weekly", cell: model.week, showLeft: showLeft))
-
-        let running = model.action == .bringToFront
-        let action = ClosureButton(symbol: running ? "arrow.up.forward" : "play",
-                                   label: running ? "Bring \(model.name) to front" : "Open \(model.name)",
-                                   onClick: onAction)
-        for view in [TileView(letter: letter, hex: hex), names, five, week, action] as [NSView] {
+        for view in [tile, names, five, week, action] as [NSView] {
             addArrangedSubview(view)
         }
+        update(model: model, letter: letter, hex: hex, showLeft: showLeft)
     }
 
     required init?(coder: NSCoder) { nil }
+
+    // In place, so a refresh neither flickers nor takes keyboard focus off the row's button.
+    func update(model: ProfileRowModel, letter: String, hex: String, showLeft: Bool) {
+        tile.set(letter: letter, hex: hex)
+        name.stringValue = model.name
+        name.toolTip = model.name
+        status.stringValue = model.status
+        status.toolTip = model.sameAccountAs.map { "Same account as \($0)" }
+        dot.filled = model.isRunning
+        five.set(model.fiveHour, spoken: QuotaColumn.spoken(owner: model.name, window: "5 hour", cell: model.fiveHour, showLeft: showLeft))
+        week.set(model.week, spoken: QuotaColumn.spoken(owner: model.name, window: "weekly", cell: model.week, showLeft: showLeft))
+        let running = model.action == .bringToFront
+        let label = running ? "Bring \(model.name) to front" : "Open \(model.name)"
+        action.image = UI.symbol(running ? "arrow.up.forward" : "play", description: label)
+        action.toolTip = label
+        action.setAccessibilityLabel(label)
+    }
 }
 
 // The button shows the action and the line under the name shows the state.
@@ -110,6 +125,15 @@ final class PopoverContentView: NSStackView {
     private let subtitleLabel = UI.label("", size: 11.5, color: .secondaryLabelColor)
     private let downLabel = UI.label("", size: 11.5, weight: .medium, color: .secondaryLabelColor)
     private let upLabel = UI.label("", size: 11.5, weight: .medium, color: .secondaryLabelColor)
+    private lazy var refreshButton = ClosureButton(symbol: "arrow.clockwise", label: "Refresh") { [weak self] in self?.onRefresh?() }
+    private let refreshSpinner: NSProgressIndicator = {
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        spinner.setAccessibilityLabel("Refreshing")
+        return spinner
+    }()
     private lazy var todayButton = ClosureButton(title: "") { [weak self] in self?.onUsageHistory?() }
     private lazy var alertCard = makeAlertCard()
     private let fiveHeader = UI.label("5h left", size: 11.5, color: .secondaryLabelColor)
@@ -219,10 +243,18 @@ final class PopoverContentView: NSStackView {
         todayButton.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
         todayButton.contentTintColor = .secondaryLabelColor
         todayButton.toolTip = "Open Usage History"
+        // The spinner takes the button's place, so the header does not move while a refresh runs.
+        let refresh = NSView()
+        UI.fix(refresh, width: UI.actionWidth, height: UI.actionWidth)
+        for view in [refreshButton, refreshSpinner] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            refresh.addSubview(view)
+            view.centerXAnchor.constraint(equalTo: refresh.centerXAnchor).isActive = true
+            view.centerYAnchor.constraint(equalTo: refresh.centerYAnchor).isActive = true
+        }
         let tools = UI.row([
-            ClosureButton(symbol: "arrow.clockwise", label: "Refresh") { [weak self] in self?.onRefresh?() },
+            refresh,
             ClosureButton(symbol: "gearshape", label: "Settings") { [weak self] in self?.onSettings?() },
-            ClosureButton(symbol: "power", label: "Quit") { NSApp.terminate(nil) },
         ], spacing: 2)
         let bottom = UI.row([todayButton, UI.spacer(), tools], spacing: 8)
         // A borderless button keeps 2pt around its title, so its text still starts on the grid.
@@ -314,6 +346,11 @@ final class PopoverContentView: NSStackView {
         }
     }
 
+    func setRefreshing(_ refreshing: Bool) {
+        refreshButton.isHidden = refreshing
+        if refreshing { refreshSpinner.startAnimation(nil) } else { refreshSpinner.stopAnimation(nil) }
+    }
+
     func setSpeed(down: Double, up: Double, today: DayUsage, binary: Bool) {
         downLabel.stringValue = "↓ \(ByteFormatter.speed(down, binary: binary))"
         upLabel.stringValue = "↑ \(ByteFormatter.speed(up, binary: binary))"
@@ -331,7 +368,7 @@ final class PopoverContentView: NSStackView {
         fiveHeader.stringValue = showLeft ? "5h left" : "5h used"
         weekHeader.stringValue = showLeft ? "Week left" : "Week used"
 
-        profileRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        var entries: [(folder: String, model: ProfileRowModel, letter: String, hex: String)] = []
         var firstOnAccount: [String: String] = [:]
         for profile in snapshot.profiles where !settings.hiddenProfiles.contains(profile.folder) {
             let name = settings.alias(forFolder: profile.folder) ?? profile.name
@@ -341,13 +378,24 @@ final class PopoverContentView: NSStackView {
                 if sameAs == nil { firstOnAccount[account] = name }
             }
             let model = ProfileRowModel.make(name: name, usage: profile.usage, running: profile.isRunning, showLeft: showLeft, now: now, sameAccountAs: sameAs)
-            let folder = profile.folder
-            let row = ProfileRowView(model: model, letter: Monogram.letter(for: name), hex: settings.tint(forFolder: folder), showLeft: showLeft) { [weak self] in
-                self?.onOpenProfile?(folder)
+            entries.append((profile.folder, model, Monogram.letter(for: name), settings.tint(forFolder: profile.folder)))
+        }
+        let current = profileRows.arrangedSubviews.compactMap { $0 as? ProfileRowView }
+        if current.map(\.folder) == entries.map(\.folder) {
+            for (row, entry) in zip(current, entries) {
+                row.update(model: entry.model, letter: entry.letter, hex: entry.hex, showLeft: showLeft)
             }
-            profileRows.addArrangedSubview(row)
-            row.translatesAutoresizingMaskIntoConstraints = false
-            row.widthAnchor.constraint(equalTo: profileRows.widthAnchor).isActive = true
+        } else {
+            profileRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            for entry in entries {
+                let folder = entry.folder
+                let row = ProfileRowView(folder: folder, model: entry.model, letter: entry.letter, hex: entry.hex, showLeft: showLeft) { [weak self] in
+                    self?.onOpenProfile?(folder)
+                }
+                profileRows.addArrangedSubview(row)
+                row.translatesAutoresizingMaskIntoConstraints = false
+                row.widthAnchor.constraint(equalTo: profileRows.widthAnchor).isActive = true
+            }
         }
 
         let visible = snapshot.profiles.filter { !settings.hiddenProfiles.contains($0.folder) }

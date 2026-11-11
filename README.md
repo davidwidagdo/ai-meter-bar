@@ -68,7 +68,7 @@ open "/Applications/AI Meter Bar.app"
 | --- | --- |
 | **Accounts** | Quota as left or used, which profiles, tools and VPNs appear, profile names, colors and launchers |
 | **Portal** | Auto-login, sign-in details, portal marker, and **Diagnose**, which checks the typed values and sends nothing |
-| **General** | Menu bar content, update intervals, units, Wi-Fi interface, start at login, usage history |
+| **General** | Menu bar content, update interval, units, Wi-Fi interface, start at login, usage history, Quit |
 
 ## Scripts
 

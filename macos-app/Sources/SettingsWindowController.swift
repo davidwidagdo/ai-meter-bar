@@ -49,7 +49,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     // General tab
     private let modePopup = NSPopUpButton()
     private let intervalPopup = NSPopUpButton()
-    private let systemIntervalPopup = NSPopUpButton()
     private let binaryCheck = NSButton(checkboxWithTitle: "Use binary units (1024 / KiB)", target: nil, action: nil)
     private let interfacePopup = NSPopUpButton()
     private let startAtLoginCheck = NSButton(checkboxWithTitle: "Start at Login", target: nil, action: nil)
@@ -57,6 +56,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     // Wiring back to AppDelegate.
     var onSave: (() -> Void)?
     var onSaveStarted: (() -> Void)?
+    var onClose: (() -> Void)?
     var isLoginItemEnabled: () -> Bool = { false }
     var setLoginItem: (Bool) -> Void = { _ in }
     var onNewProfile: (() -> Void)?
@@ -65,7 +65,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     var vpnServices: () -> [VPNService] = { [] }
     var runDiagnostics: ((_ loginURL: String, _ marker: String, @escaping ([String]) -> Void) -> Void)?
 
-    private let intervalOptions = Settings.intervalOptions
+    private let intervalOptions = MeterSchedule.options
     private let modes = MenuBarMode.allCases
 
     convenience init() {
@@ -464,16 +464,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func buildGeneralTab() -> NSView {
-        for popup in [modePopup, intervalPopup, systemIntervalPopup, interfacePopup] {
+        for popup in [modePopup, intervalPopup, interfacePopup] {
             popup.translatesAutoresizingMaskIntoConstraints = false
         }
         modePopup.removeAllItems()
         modePopup.addItems(withTitles: modes.map(\.title))
-        for popup in [intervalPopup, systemIntervalPopup] {
-            popup.removeAllItems()
-            popup.addItems(withTitles: ["1 second", "2 seconds", "5 seconds"])
-        }
+        intervalPopup.removeAllItems()
+        intervalPopup.addItems(withTitles: ["1 second", "2 seconds", "5 seconds"])
         rebuildInterfacePopup()
+        let lowPowerNote = UI.label("\(MeterSchedule.lowPowerInterval) s in Low Power Mode", size: 11.5, color: .secondaryLabelColor)
+        let quit = ClosureButton(title: "Quit AI Meter Bar") { NSApp.terminate(nil) }
+        quit.hasDestructiveAction = true
 
         let resetButton = NSButton(title: "Reset Today…", target: self, action: #selector(resetUsage))
         let history = ClosureButton(title: "Usage History") { [weak self] in self?.onOpenUsageHistory?() }
@@ -483,13 +484,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         return grid([
             [label("Menu bar shows:"), modePopup],
-            [label("Speed interval:"), intervalPopup],
-            [label("CPU and RAM interval:"), systemIntervalPopup],
+            [label("Update every:"), UI.row([intervalPopup, lowPowerNote], spacing: 8)],
             [NSGridCell.emptyContentView, binaryCheck],
             [label("Wi-Fi interface:"), interfacePopup],
             [NSGridCell.emptyContentView, startAtLoginCheck],
             [label("Usage:"), UI.row([history, resetButton], spacing: 8)],
             [label("Troubleshooting:"), logButton],
+            [NSGridCell.emptyContentView, quit],
         ])
     }
 
@@ -621,8 +622,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         revealButton.image = eyeImage(revealed: false)
 
         modePopup.selectItem(at: modes.firstIndex(of: s.menuBarMode) ?? 0)
-        intervalPopup.selectItem(at: intervalOptions.firstIndex(of: s.speedInterval) ?? 1)
-        systemIntervalPopup.selectItem(at: intervalOptions.firstIndex(of: s.systemInterval) ?? 1)
+        intervalPopup.selectItem(at: intervalOptions.firstIndex(of: s.updateInterval) ?? 1)
         binaryCheck.state = s.useBinaryUnits ? .on : .off
         rebuildInterfacePopup()
         let override = s.wifiInterfaceOverride
@@ -675,8 +675,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         s.portalMarker = marker
 
         s.menuBarMode = modes[safe: modePopup.indexOfSelectedItem] ?? s.menuBarMode
-        s.speedInterval = intervalOptions[safe: intervalPopup.indexOfSelectedItem] ?? 2
-        s.systemInterval = intervalOptions[safe: systemIntervalPopup.indexOfSelectedItem] ?? 2
+        s.updateInterval = intervalOptions[safe: intervalPopup.indexOfSelectedItem] ?? 2
         s.useBinaryUnits = binaryCheck.state == .on
         s.wifiInterfaceOverride = (interfacePopup.selectedItem?.representedObject as? String) ?? ""
         // A hidden VPN that macOS no longer lists stays hidden if it comes back.
@@ -732,6 +731,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         passwordField.isHidden = false
         passwordPlainField.isHidden = true
         revealButton.image = eyeImage(revealed: false)
+        onClose?()
     }
 
     func present() {

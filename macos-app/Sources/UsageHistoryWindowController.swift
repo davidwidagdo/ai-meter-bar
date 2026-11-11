@@ -8,6 +8,7 @@ final class UsageHistoryWindowController: NSWindowController, NSWindowDelegate,
     private let peak = UsageHistoryWindowController.statValue()
     private var rows: [DayUsage] = []
     private var maxTotal: UInt64 = 1
+    var onClose: (() -> Void)?
 
     convenience init() {
         let window = NSWindow(
@@ -93,6 +94,10 @@ final class UsageHistoryWindowController: NSWindowController, NSWindowDelegate,
         table.addTableColumn(col("down", "↓ Download", width: 122))
         table.addTableColumn(col("up", "↑ Upload", width: 122))
         table.addTableColumn(col("total", "Total", width: 128))
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onClose?()
     }
 
     func present() {
