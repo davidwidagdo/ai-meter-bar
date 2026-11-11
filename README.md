@@ -24,11 +24,11 @@
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TD
   A[Claude usage files] --> P[Panel and menu bar]
-  B[Codex and Antigravity, asked live] --> P
-  V[VPNs in macOS settings] --> P
-  N[Wi-Fi and system counters] --> P
+  B[Codex and Antigravity] --> P
+  V[VPNs in macOS] --> P
+  N[Wi-Fi and system] --> P
   P -->|Connect or Disconnect| M[macOS starts or stops the VPN]
 ```
 
