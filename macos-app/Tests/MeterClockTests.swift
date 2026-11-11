@@ -1,15 +1,13 @@
 import Foundation
 
 func testMeterSchedule() {
-    T.eq(MeterSchedule.baseInterval(speed: 1, system: 1), 1, "base 1 and 1")
-    T.eq(MeterSchedule.baseInterval(speed: 1, system: 5), 1, "base 1 and 5")
-    T.eq(MeterSchedule.baseInterval(speed: 2, system: 5), 1, "base 2 and 5")
-    T.eq(MeterSchedule.baseInterval(speed: 2, system: 4), 2, "base 2 and 4")
-    T.eq(MeterSchedule.baseInterval(speed: 5, system: nil), 5, "base without system metrics")
-
-    T.eq(MeterSchedule.isDue(tick: 0, every: 2, base: 1), true, "tick 0 every 2")
-    T.eq(MeterSchedule.isDue(tick: 1, every: 2, base: 1), false, "tick 1 every 2")
-    T.eq(MeterSchedule.isDue(tick: 2, every: 2, base: 1), true, "tick 2 every 2")
-    T.eq(MeterSchedule.isDue(tick: 1, every: 4, base: 2), false, "tick 1 every 4 base 2")
-    T.eq(MeterSchedule.isDue(tick: 2, every: 4, base: 2), true, "tick 2 every 4 base 2")
+    T.eq(MeterSchedule.interval(setting: 1, lowPower: false), 1, "the setting is used as it is")
+    T.eq(MeterSchedule.interval(setting: 1, lowPower: true), 5, "Low Power Mode slows a fast setting to 5 s")
+    T.eq(MeterSchedule.interval(setting: 2, lowPower: true), 5, "Low Power Mode slows 2 s to 5 s")
+    T.eq(MeterSchedule.interval(setting: 5, lowPower: true), 5, "Low Power Mode never speeds a slow setting up")
+    T.eq(MeterSchedule.migrated(speed: 1, system: 2), 1, "the faster old interval is kept")
+    T.eq(MeterSchedule.migrated(speed: 5, system: 2), 2, "whichever of the two was faster")
+    T.eq(MeterSchedule.migrated(speed: nil, system: 5), 5, "one old value alone is kept")
+    T.eq(MeterSchedule.migrated(speed: nil, system: nil), 2, "a fresh install starts at 2 s")
+    T.eq(MeterSchedule.migrated(speed: 7, system: nil), 2, "a value outside the offered set falls back to 2 s")
 }

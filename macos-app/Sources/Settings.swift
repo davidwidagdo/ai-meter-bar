@@ -45,6 +45,7 @@ final class Settings {
         static let autoLogin = "autoLoginEnabled"
         static let showSpeedMeter = "showSpeedMeter"
         static let speedInterval = "speedInterval"
+        static let updateInterval = "updateInterval"
         static let useBinaryUnits = "useBinaryUnits"
         static let interfaceOverride = "wifiInterfaceOverride"
         static let showCPUMeter = "showCPUMeter"
@@ -179,16 +180,14 @@ final class Settings {
         defaults.set(all, forKey: Key.profileTints)
     }
 
-    // The sampling periods offered for both meters, in seconds.
-    static let intervalOptions = [1, 2, 5]
-
-    // Seconds between speed samples.
-    var speedInterval: Int {
+    // Seconds between meter samples; an upgrade keeps the faster of the two old intervals.
+    var updateInterval: Int {
         get {
-            let v = defaults.object(forKey: Key.speedInterval) as? Int ?? 2
-            return Settings.intervalOptions.contains(v) ? v : 2
+            if let v = defaults.object(forKey: Key.updateInterval) as? Int, MeterSchedule.options.contains(v) { return v }
+            return MeterSchedule.migrated(speed: defaults.object(forKey: Key.speedInterval) as? Int,
+                                          system: defaults.object(forKey: Key.systemInterval) as? Int)
         }
-        set { defaults.set(newValue, forKey: Key.speedInterval) }
+        set { defaults.set(newValue, forKey: Key.updateInterval) }
     }
 
     var useBinaryUnits: Bool {
@@ -200,14 +199,5 @@ final class Settings {
     var wifiInterfaceOverride: String {
         get { defaults.string(forKey: Key.interfaceOverride) ?? "" }
         set { defaults.set(newValue, forKey: Key.interfaceOverride) }
-    }
-
-    // Seconds between system samples. 1s reads as jittery at 9pt, so default to 2.
-    var systemInterval: Int {
-        get {
-            let v = defaults.object(forKey: Key.systemInterval) as? Int ?? 2
-            return Settings.intervalOptions.contains(v) ? v : 2
-        }
-        set { defaults.set(newValue, forKey: Key.systemInterval) }
     }
 }

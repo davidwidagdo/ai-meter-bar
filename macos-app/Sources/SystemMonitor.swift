@@ -1,6 +1,6 @@
 import Foundation
 
-// MeterClock calls tick every systemInterval, so the CPU window never follows the speed interval.
+// MeterClock calls tick once per update interval, so that is the CPU window.
 final class SystemMonitor {
     struct Sample {
         let cpuBusy: Double            // 0...1, NaN when no recent window exists

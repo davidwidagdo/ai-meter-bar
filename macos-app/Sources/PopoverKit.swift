@@ -297,6 +297,10 @@ final class TileView: NSImageView {
 
     required init?(coder: NSCoder) { nil }
 
+    func set(letter: String, hex: String) {
+        image = Monogram.image(letter: letter, hex: hex, size: UI.tileSize)
+    }
+
     private func configure(_ tile: NSImage) {
         image = tile
         imageScaling = .scaleNone

@@ -39,6 +39,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
     private var latestSystem: SystemMonitor.Sample?
     private var snapshot = AISnapshot()
     private var lastRenderKey: String?
+    private var refreshing = false
 
     func install() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -114,6 +115,8 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         isOpen = false
+        // A hidden spinner must not keep animating.
+        content.setRefreshing(false)
         delegate?.popoverDidClose()
     }
 
@@ -161,6 +164,11 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         if isOpen { content.setSnapshot(snapshot, settings: .shared, now: Date()) }
     }
 
+    func setRefreshing(_ refreshing: Bool) {
+        self.refreshing = refreshing
+        if isOpen { content.setRefreshing(refreshing) }
+    }
+
     func vpnChanged() {
         guard isOpen else { return }
         content.setVPN(vpnRows())
@@ -183,6 +191,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         syncStatus()
         syncSpeed()
         syncSystem()
+        content.setRefreshing(refreshing)
         content.setVPN(vpnRows())
         content.setSnapshot(snapshot, settings: .shared, now: Date())
     }

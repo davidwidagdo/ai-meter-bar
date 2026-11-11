@@ -18,7 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let speedMonitor = SpeedMonitor()
     private let systemMonitor = SystemMonitor()
     private lazy var meterClock = MeterClock { [weak self] tick in self?.meterTick(tick) }
-    private var meterBase = 1
     private var displayAsleep = false
 
     private var isBusy = false
@@ -56,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusController.delegate = self
         statusController.install()
         usageCoordinator.onUpdate = { [weak self] snapshot in self?.statusController.setSnapshot(snapshot) }
+        usageCoordinator.onBusyChange = { [weak self] busy in self?.statusController.setRefreshing(busy) }
         statusController.vpnRows = { [weak self] in self?.vpn.rows(now: Date()) ?? [] }
         vpn.onChange = { [weak self] in self?.statusController.vpnChanged() }
         vpn.refresh()
@@ -109,8 +109,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // CPU and RAM are sampled only while something shows them.
-    private var systemEvery: Int? {
-        statusController.isOpen || Settings.shared.menuBarMode.showsSystem ? Settings.shared.systemInterval : nil
+    private var showsSystem: Bool {
+        statusController.isOpen || Settings.shared.menuBarMode.showsSystem
     }
 
     private func restartMeters() {
@@ -121,20 +121,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startMeterClock() {
-        meterBase = MeterSchedule.baseInterval(speed: Settings.shared.speedInterval, system: systemEvery)
-        meterClock.start(interval: meterBase)
+        meterClock.start(interval: MeterSchedule.interval(setting: Settings.shared.updateInterval,
+                                                          lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled))
     }
 
     private func meterTick(_ tick: Int) {
-        if MeterSchedule.isDue(tick: tick, every: Settings.shared.speedInterval, base: meterBase) {
-            speedMonitor.tick()
-        }
+        speedMonitor.tick()
         // Speed keeps sampling with the screen off, so each day's bytes stay in that day.
         guard !displayAsleep else { return }
-        if let every = systemEvery, MeterSchedule.isDue(tick: tick, every: every, base: meterBase) {
-            systemMonitor.tick()
-        }
+        if showsSystem { systemMonitor.tick() }
         statusController.flushMeters()
+    }
+
+    @objc private func powerStateChanged() {
+        DispatchQueue.main.async { [weak self] in self?.startMeterClock() }
     }
 
     private func resumeDrawing() {
@@ -165,6 +165,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         center.addObserver(self, selector: #selector(systemDidWake), name: NSWorkspace.didWakeNotification, object: nil)
         center.addObserver(self, selector: #selector(screensDidSleep), name: NSWorkspace.screensDidSleepNotification, object: nil)
         center.addObserver(self, selector: #selector(screensDidWake), name: NSWorkspace.screensDidWakeNotification, object: nil)
+        // Posted on any thread when Low Power Mode turns on or off.
+        NotificationCenter.default.addObserver(self, selector: #selector(powerStateChanged),
+                                               name: .NSProcessInfoPowerStateDidChange, object: nil)
     }
 
     private func syncUsageTimer() {
@@ -478,6 +481,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func openUsageHistory() {
         guard !AppMode.isDemo else { return }
         if usageHistoryWC == nil { usageHistoryWC = UsageHistoryWindowController() }
+        // Released on close, after the close itself has finished.
+        usageHistoryWC?.onClose = { [weak self] in DispatchQueue.main.async { self?.usageHistoryWC = nil } }
         usageHistoryWC?.present()
     }
 
@@ -570,6 +575,7 @@ extension AppDelegate: StatusPopoverDelegate {
         if settingsWC == nil {
             settingsWC = SettingsWindowController()
         }
+        settingsWC?.onClose = { [weak self] in DispatchQueue.main.async { self?.settingsWC = nil } }
         settingsWC?.isLoginItemEnabled = { SMAppService.mainApp.status == .enabled }
         settingsWC?.setLoginItem = { [weak self] on in self?.setLoginItem(on) }
         settingsWC?.onNewProfile = { [weak self] in self?.openNewProfile() }

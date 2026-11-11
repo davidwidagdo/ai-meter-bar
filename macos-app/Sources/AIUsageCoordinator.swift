@@ -3,6 +3,8 @@ import Foundation
 // Collects usage off the main thread; only Codex's own tool contacts a server, and only when asked.
 final class AIUsageCoordinator {
     var onUpdate: ((AISnapshot) -> Void)?
+    // Called on the main thread when a refresh starts and when the last queued one ends.
+    var onBusyChange: ((Bool) -> Void)?
 
     private let queue = DispatchQueue(label: "com.davidwidagdo.aimeterbar.ai-usage", qos: .utility)
     private let cache = ClaudeUsageCache()
@@ -20,6 +22,7 @@ final class AIUsageCoordinator {
             return
         }
         inFlight = true
+        onBusyChange?(true)
         queue.async { [weak self] in
             guard let self = self else { return }
             self.deliver(Self.collect(cache: self.cache, live: self.liveUsage))
@@ -33,6 +36,8 @@ final class AIUsageCoordinator {
                 if self.liveRequested {
                     self.liveRequested = false
                     self.refresh(live: true)
+                } else {
+                    self.onBusyChange?(false)
                 }
             }
         }
