@@ -19,6 +19,9 @@ enum PortalDiagnostics {
         } else {
             lines.append("Portal page: HTTP \(page.status.map(String.init) ?? "?"), \(page.hops) redirect(s), host is \(hostKind).")
         }
+        if page.overWiFi == false {
+            lines.append("Link: this page did not arrive over Wi-Fi, so the app will not sign in to it.")
+        }
         lines.append(page.form == nil ? "Login form: not found." : "Login form: found.")
         let trimmed = marker.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty {

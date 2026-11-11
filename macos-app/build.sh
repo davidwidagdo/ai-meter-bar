@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Usage: ./build.sh [--no-dmg] [--install]
 set -euo pipefail
+# System tools only, so nothing earlier on a caller's PATH can stand in for the compiler or signer.
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 APP_NAME="AI Meter Bar"
@@ -33,6 +35,17 @@ swiftc -O \
   -framework Cocoa -framework Security -framework ServiceManagement -framework CoreWLAN
 
 cp Info.plist "${APP_DIR}/Contents/Info.plist"
+
+# Records what was built: every file in Sources is compiled, so stray or changed files are named.
+if COMMIT="$(git rev-parse --short HEAD 2>/dev/null)"; then
+  CHANGED="$(git status --porcelain -- . | wc -l | tr -d ' ')"
+  if [ "$CHANGED" != "0" ]; then
+    echo "WARNING: ${CHANGED} uncommitted or untracked file(s) under macos-app are part of this build:"
+    git status --porcelain -- . | sed 's/^/    /'
+    COMMIT="${COMMIT}-dirty"
+  fi
+  /usr/libexec/PlistBuddy -c "Add :AIMeterBarCommit string ${COMMIT}" "${APP_DIR}/Contents/Info.plist"
+fi
 
 if [ -f AppIcon.png ]; then
   echo "==> Generating app icon from AppIcon.png"

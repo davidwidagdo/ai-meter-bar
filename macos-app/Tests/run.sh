@@ -27,6 +27,8 @@ swiftc -o "$OUT" \
   Sources/MeterClock.swift \
   Tests/MeterClockTests.swift \
   Sources/VPN.swift \
+  Sources/PortalSecret.swift \
+  Tests/AuditTests.swift \
   Tests/VPNTests.swift \
   Tests/TestSupport.swift \
   Tests/ByteFormatterTests.swift \

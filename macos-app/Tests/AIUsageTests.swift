@@ -52,6 +52,9 @@ func testLiveParsers() {
     T.expect(!CodexAppServerParser.isReply(data(#"{"id":1,"result":{}}"#)), "another reply does not end the wait")
     T.expect(!CodexAppServerParser.isReply(data(#"{"method":"x"}"#)), "a notification does not end the wait")
     T.expect(!CodexAppServerParser.isReply(data("garbage")), "garbage does not end the wait")
+    T.expect(CodexAppServerParser.isEmptyResult(data(#"{"id":2,"result":{"rateLimits":{}}}"#)), "a result without limits means no numbers")
+    T.expect(!CodexAppServerParser.isEmptyResult(data(#"{"id":2,"error":{"code":1}}"#)), "an error reply does not clear the last reading")
+    T.expect(!CodexAppServerParser.isEmptyResult(data(#"{"id":1,"result":{}}"#)), "another request's result is not ours")
 
     let old = CodexReading(primary: nil, secondary: nil, date: now.addingTimeInterval(-60))
     let fresh = CodexReading(primary: nil, secondary: nil, date: now)

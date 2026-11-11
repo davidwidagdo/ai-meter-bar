@@ -82,6 +82,7 @@ open "/Applications/AI Meter Bar.app"
 ## Security and privacy
 
 - The portal password lives only in the Keychain, and goes only to the Login URL's address, or to the Wi-Fi gateway once your portal marker matches.
+- It is saved together with the Login URL and marker. If either is changed outside Settings, sign-in is refused until you save again.
 - Logs never contain a password, portal address, IP or VPN name.
 - The bar holds no AI login. Codex's own tool signs itself in and ends after answering; Antigravity is asked only on this Mac's loopback address.
 - The VPN app keeps its profiles and passwords. The bar stores only the IDs of VPNs you hide.

@@ -5,24 +5,29 @@ enum SafeFile {
     static let maxConfigBytes = 2 * 1024 * 1024
     static let tailBytes = 32 * 1024
 
-    private static func isRegular(_ url: URL) -> Bool {
-        (try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeRegular
+    // Checked on the open file, so a link swapped in after a look at the path is never read.
+    private static func open(_ url: URL) -> (handle: FileHandle, size: Int)? {
+        let fd = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_uid == getuid() else { return nil }
+        return (handle, Int(info.st_size))
     }
 
     static func read(_ url: URL) -> Data? {
-        guard isRegular(url),
-              let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int,
-              size <= maxConfigBytes else { return nil }
-        return try? Data(contentsOf: url)
+        guard let file = open(url), file.size <= maxConfigBytes,
+              let data = try? file.handle.read(upToCount: maxConfigBytes + 1), data.count <= maxConfigBytes else { return nil }
+        return data
     }
 
     static func tail(_ url: URL, maxBytes: Int = tailBytes) -> (data: Data, truncated: Bool)? {
-        guard isRegular(url), let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
+        guard let handle = open(url)?.handle else { return nil }
         guard let end = try? handle.seekToEnd() else { return nil }
         let start = end > UInt64(maxBytes) ? end - UInt64(maxBytes) : 0
+        // Bounded, because the file can grow between the seek and the read.
         guard (try? handle.seek(toOffset: start)) != nil,
-              let data = try? handle.readToEnd() else { return nil }
+              let data = try? handle.read(upToCount: maxBytes) else { return nil }
         return (data, start > 0)
     }
 
@@ -139,9 +144,20 @@ enum AntigravityParser {
 enum CodexAppServerParser {
     static let requestID = 2
 
-    // An error reply ends the wait at once instead of after the timeout.
+    // Any reply ends the wait at once instead of after the timeout.
     static func isReply(_ line: Data) -> Bool {
-        ((try? JSONSerialization.jsonObject(with: line)) as? [String: Any])?["id"] as? NSNumber == NSNumber(value: requestID)
+        reply(line) != nil
+    }
+
+    // Only a result without limits means no numbers; an error, as when offline, says nothing.
+    static func isEmptyResult(_ line: Data) -> Bool {
+        reply(line)?["result"] != nil
+    }
+
+    private static func reply(_ line: Data) -> [String: Any]? {
+        guard let root = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
+              (root["id"] as? NSNumber)?.intValue == requestID else { return nil }
+        return root
     }
 
     static func reading(fromLine line: Data, now: Date) -> CodexReading? {

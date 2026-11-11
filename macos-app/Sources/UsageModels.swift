@@ -51,6 +51,19 @@ enum RelativeAge {
     }
 }
 
+// empty: the tool answered with no numbers, as after a sign-out. unavailable: no answer at all.
+enum LiveRead<Value> {
+    case reading(Value), empty, unavailable
+
+    func next(keeping last: Value?) -> Value? {
+        switch self {
+        case .reading(let value): return value
+        case .empty:              return nil
+        case .unavailable:        return last
+        }
+    }
+}
+
 enum TokenFormat {
     static func short(_ tokens: Int) -> String {
         // From 999,950 the K form would round up to "1000.0K".

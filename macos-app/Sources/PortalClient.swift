@@ -16,16 +16,6 @@ struct NetworkSignature: Equatable {
     let router: String?
 }
 
-// Portal replies are read as they come; a followed redirect would lose the hop.
-final class NoRedirects: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
-    }
-}
-
 // Connectivity detection + captive-portal login.
 final class PortalClient {
     private static let maxRedirectHops = 3
@@ -80,19 +70,19 @@ final class PortalClient {
             + (ignored ? ", marker ignored: it matches this app's own addresses" : "")
     }
 
-    private lazy var session: URLSession = {
+    // Portal replies are read as they come: no redirect is followed, and a body stops at its cap.
+    private lazy var fetcher: CappedFetcher = {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 5
-        // A page that never ends must not keep growing in memory.
         cfg.timeoutIntervalForResource = 20
         cfg.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        return URLSession(configuration: cfg, delegate: NoRedirects(), delegateQueue: nil)
+        return CappedFetcher(configuration: cfg)
     }()
 
     // Apple's probe returns "Success" only with real internet; otherwise the portal intercepts it.
     func checkConnectivity(completion: @escaping (ConnState) -> Void) {
-        let task = session.dataTask(with: probeURL) { data, _, _ in
-            if let data = data,
+        fetcher.fetch(URLRequest(url: probeURL), maxBytes: CaptivePage.maxBytes) { result in
+            if let data = result.data,
                let body = String(data: data, encoding: .utf8),
                body.contains(self.successMarker) {
                 completion(.connected)
@@ -100,7 +90,6 @@ final class PortalClient {
                 completion(.captured)
             }
         }
-        task.resume()
     }
 
     // Gate before any POST: the page must hold a login form, or the marker when set.
@@ -140,26 +129,39 @@ final class PortalClient {
                 return
             }
             let settings = Settings.shared
+            // Read once: every check and the POST below must judge the same Login URL.
+            let loginURL = settings.loginURL
+            let portal = URL(string: loginURL)
             let form = page.form
             let action = form.flatMap { Self.resolve(action: $0.action, base: page.url) }
             let markerSet = !page.marker.isEmpty
-            if form != nil, !PostGuard.allows(target: action, portal: self.portalURL, gateway: page.gateway, markerSet: markerSet) {
+            if form != nil, !PostGuard.allows(target: action, portal: portal, gateway: page.gateway, markerSet: markerSet) {
                 Log.write("Refused to send credentials: the form posts to another address. Set Login URL to the portal address.")
                 completion(.refused)
                 return
             }
-            let endpoint = Self.configuredEndpoint(settings.loginURL)
+            let endpoint = Self.configuredEndpoint(loginURL)
+            guard page.overWiFi != false else {
+                Log.write("Refused to send credentials: the portal page did not arrive over Wi-Fi.")
+                completion(.refused)
+                return
+            }
             if form == nil, endpoint == nil {
                 Log.write("No login form on the page and no usable Login URL — nothing to submit.")
                 completion(.refused)
                 return
             }
-            let password = settings.password
-            guard !password.isEmpty else {
+            guard let secret = settings.portalSecret, !secret.password.isEmpty else {
                 Log.write("No password from the Keychain — re-enter it in Settings.")
                 completion(.noPassword)
                 return
             }
+            guard secret.allows(loginURL: loginURL, marker: page.marker) else {
+                Log.write("Refused to send credentials: Login URL or marker changed outside Settings. Save them in Settings again.")
+                completion(.refused)
+                return
+            }
+            let password = secret.password
             guard PostGuard.gatewayHolds(proven: page.gateway, current: self.wifiGateway, markerSet: markerSet) else {
                 Log.write("Refused to send credentials: the network changed during sign-in.")
                 completion(.refused)
@@ -170,6 +172,7 @@ final class PortalClient {
                               fields: form.filled(username: settings.username, password: password),
                               source: "form",
                               page: page,
+                              portalHost: portal?.host,
                               completion: completion)
             } else if let endpoint = endpoint {
                 self.loginWithConfiguredEndpoint(endpoint, password: password, page: page, completion: completion)
@@ -228,16 +231,27 @@ final class PortalClient {
         let gateway = wifiGateway
         var request = Self.portalRequest(url, portalHost: portalHost, via: route)
         request.timeoutInterval = 6
-        let task = session.dataTask(with: request) { [weak self] data, response, _ in
+        let wifiName = wifiQueue.sync { wifiInterface }
+        fetcher.fetch(request, maxBytes: CaptivePage.maxBytes) { [weak self] result in
             // Older portals send Latin-1; every byte sequence decodes as Latin-1.
-            guard let data = data, data.count <= CaptivePage.maxBytes,
+            guard let data = result.data,
                   let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
                 completion(nil)
                 return
             }
-            let page = CaptivePage(url: url, html: html, hops: hops, status: (response as? HTTPURLResponse)?.statusCode,
-                                   gateway: gateway, marker: marker, route: route)
-            let location = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location")
+            let addresses = NetworkInterface.addresses()
+            // lo0 is left out: it holds fe80::1, which is also a common router address.
+            let own = Set(addresses.filter { !$0.key.hasPrefix("lo") }.values.joined())
+            // A name that resolves to this Mac would pass a local service's page off as the portal.
+            guard !PageOrigin.isThisMac(remote: result.remoteAddress, ownAddresses: own) else {
+                Log.write("Ignored a page served by this Mac.")
+                completion(nil)
+                return
+            }
+            let overWiFi = PageOrigin.cameOverWiFi(local: result.localAddress, wifiAddresses: wifiName.flatMap { addresses[$0] })
+            let page = CaptivePage(url: url, html: html, hops: hops, status: result.status,
+                                   gateway: gateway, marker: marker, route: route, overWiFi: overWiFi)
+            let location = (result.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location")
                 .flatMap { URL(string: $0, relativeTo: url)?.absoluteURL }
             guard let self = self, hops < Self.maxRedirectHops,
                   let next = location ?? LoginFormParser.redirectURL(html: html, base: page.url),
@@ -247,7 +261,6 @@ final class PortalClient {
             }
             self.fetchPage(next, hops: hops + 1, marker: marker, portalHost: portalHost, via: route, completion: completion)
         }
-        task.resume()
     }
 
     // A portal never lives on this Mac, so a Login URL pointing here is not one.
@@ -263,22 +276,22 @@ final class PortalClient {
             ("password", password),
         ]
         fields.append(contentsOf: Self.parseExtraFields(settings.extraFields))
-        postForm(url: url, fields: fields, source: "configured", page: page, completion: completion)
+        postForm(url: url, fields: fields, source: "configured", page: page, portalHost: url.host, completion: completion)
     }
 
-    private func postForm(url: URL, fields: [(String, String)], source: String, page: CaptivePage, completion: @escaping (LoginSubmit) -> Void) {
+    private func postForm(url: URL, fields: [(String, String)], source: String, page: CaptivePage, portalHost: String?,
+                          completion: @escaping (LoginSubmit) -> Void) {
         var request = Self.portalRequest(url, portalHost: portalHost, via: page.route)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = Self.formEncode(fields).data(using: .utf8)
         request.timeoutInterval = 15
-        let task = session.dataTask(with: request) { _, response, error in
-            let status = (response as? HTTPURLResponse).map { "HTTP \($0.statusCode)" } ?? "no response"
-            Log.write("Login POST: \(status) (\(source))\(error.map { " (error \(($0 as NSError).code))" } ?? "").")
+        fetcher.fetch(request, maxBytes: CaptivePage.maxBytes) { result in
+            let status = result.status.map { "HTTP \($0)" } ?? "no response"
+            Log.write("Login POST: \(status) (\(source))\(result.error.map { " (error \(($0 as NSError).code))" } ?? "").")
             // The response body varies by portal; the caller confirms the login separately.
-            completion(error == nil ? .sent : .failed)
+            completion(result.error == nil ? .sent : .failed)
         }
-        task.resume()
     }
 
     // MARK: - Helpers
