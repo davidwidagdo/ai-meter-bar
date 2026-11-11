@@ -59,7 +59,7 @@ final class Settings {
         static let profileTints = "claudeProfileTints"
         static let hiddenProfiles = "hiddenClaudeProfiles"
         static let hiddenTools = "hiddenAITools"
-        static let showVPN = "showVPN"
+        static let hiddenVPNs = "hiddenVPNs"
     }
 
     private init() {
@@ -136,9 +136,10 @@ final class Settings {
         set { defaults.set(newValue, forKey: Key.showAntigravity) }
     }
 
-    var showVPN: Bool {
-        get { defaults.object(forKey: Key.showVPN) as? Bool ?? true }
-        set { defaults.set(newValue, forKey: Key.showVPN) }
+    // macOS service IDs only; names stay with the VPN app.
+    var hiddenVPNs: Set<String> {
+        get { Set(defaults.stringArray(forKey: Key.hiddenVPNs) ?? []) }
+        set { defaults.set(newValue.sorted(), forKey: Key.hiddenVPNs) }
     }
 
     var hiddenProfiles: Set<String> {

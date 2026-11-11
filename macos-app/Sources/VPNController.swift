@@ -16,7 +16,7 @@ final class VPNController {
     private var listing = false
 
     func rows(now: Date) -> [VPNPanelRow] {
-        services.map {
+        VPNServiceList.visible(services, hidden: Settings.shared.hiddenVPNs).map {
             VPNPanelRow(id: $0.id, name: $0.name,
                         model: VPNRowModel.make($0, connectedSince: connectedSince[$0.id], failed: failed.contains($0.id), now: now))
         }
@@ -24,7 +24,6 @@ final class VPNController {
 
     // At launch, panel open, wake and Save; status changes in between arrive as events.
     func refresh() {
-        guard Settings.shared.showVPN else { return clear() }
         if AppMode.isDemo {
             services = DemoData.vpnServices
             connectedSince = [services[0].id: Date().addingTimeInterval(-4300)]
@@ -40,21 +39,10 @@ final class VPNController {
                 guard let self = self else { return }
                 self.listing = false
                 // A slow or failed listing, common after a wake, says nothing; the last list stays.
-                guard let listed = listed, Settings.shared.showVPN else { return }
+                guard let listed = listed else { return }
                 self.apply(listed)
             }
         }
-    }
-
-    func clear() {
-        links.values.forEach { $0.stop() }
-        links.removeAll()
-        deadlines.values.forEach { $0.cancel() }
-        deadlines.removeAll()
-        services = []
-        connectedSince.removeAll()
-        failed.removeAll()
-        onChange?()
     }
 
     func perform(id: String) {
@@ -143,18 +131,28 @@ final class VPNController {
     private func openApp(for service: VPNService) {
         failed.remove(service.id)
         onChange?()
-        // A VPN extension's ID starts with its app's ID, so trimming parts finds the app.
-        var parts = (service.provider ?? "").split(separator: ".").map(String.init)
-        while parts.count >= 2 {
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: parts.joined(separator: ".")) {
-                NSWorkspace.shared.openApplication(at: url, configuration: .init())
-                return
-            }
-            parts.removeLast()
+        if let url = Self.appURL(for: service.provider) {
+            NSWorkspace.shared.openApplication(at: url, configuration: .init())
+            return
         }
         if let settings = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.systempreferences") {
             NSWorkspace.shared.openApplication(at: settings, configuration: .init())
         }
+    }
+
+    // The VPN app's own name, for the Settings row; a system VPN has none.
+    static func appName(for provider: String?) -> String {
+        appURL(for: provider).map { $0.deletingPathExtension().lastPathComponent } ?? "macOS VPN"
+    }
+
+    // A VPN extension's ID starts with its app's ID, so trimming parts finds the app.
+    private static func appURL(for provider: String?) -> URL? {
+        var parts = (provider ?? "").split(separator: ".").map(String.init)
+        while parts.count >= 2 {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: parts.joined(separator: ".")) { return url }
+            parts.removeLast()
+        }
+        return nil
     }
 
     private static func runScutil(_ arguments: [String]) {

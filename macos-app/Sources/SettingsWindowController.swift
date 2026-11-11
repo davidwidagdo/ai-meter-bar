@@ -24,6 +24,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let antigravitySwitch = NSSwitch()
     private var toolSwitches: [AITool: NSSwitch] = [:]
     private let toolRows = UI.column([], spacing: 4)
+    private let vpnRows = UI.column([], spacing: 4)
+    private var vpnSwitches: [String: NSSwitch] = [:]
 
     // Portal tab
     private let tabView = NSTabView()
@@ -51,7 +53,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let binaryCheck = NSButton(checkboxWithTitle: "Use binary units (1024 / KiB)", target: nil, action: nil)
     private let interfacePopup = NSPopUpButton()
     private let startAtLoginCheck = NSButton(checkboxWithTitle: "Start at Login", target: nil, action: nil)
-    private let showVPNCheck = NSButton(checkboxWithTitle: "Show VPN in panel", target: nil, action: nil)
 
     // Wiring back to AppDelegate.
     var onSave: (() -> Void)?
@@ -60,6 +61,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     var onNewProfile: (() -> Void)?
     var onProfilesChanged: (() -> Void)?
     var onOpenUsageHistory: (() -> Void)?
+    var vpnServices: () -> [VPNService] = { [] }
     var runDiagnostics: ((_ loginURL: String, _ marker: String, @escaping ([String]) -> Void) -> Void)?
 
     private let intervalOptions = Settings.intervalOptions
@@ -170,28 +172,55 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let tools = CardView(toolRows, padding: 8)
         UI.fix(tools, width: 560)
 
-        return UI.column([header, profiles, note, others, tools], spacing: 12)
+        let vpnTitle = UI.label("VPN", size: 15, weight: .semibold)
+        let vpns = CardView(vpnRows, padding: 8)
+        UI.fix(vpns, width: 560)
+        let vpnNote = UI.label("Hiding a VPN only removes its row; its profile stays in its own app.", size: 12, color: .secondaryLabelColor)
+
+        return UI.column([header, profiles, note, others, tools, vpnTitle, vpns, vpnNote], spacing: 12)
+    }
+
+    // One switch per VPN macOS lists, like the profile switches above.
+    private func rebuildVPNs() {
+        vpnRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        vpnSwitches.removeAll()
+        let services = vpnServices()
+        guard !services.isEmpty else {
+            let empty = UI.row([UI.label("No VPN in System Settings yet.", size: 12, color: .secondaryLabelColor)])
+            UI.fix(empty, width: 544, height: UI.rowHeight)
+            vpnRows.addArrangedSubview(empty)
+            return
+        }
+        let hidden = Settings.shared.hiddenVPNs
+        for service in services {
+            let toggle = NSSwitch()
+            toggle.setAccessibilityLabel("Show \(service.name) in the bar")
+            toggle.state = hidden.contains(service.id) ? .off : .on
+            vpnSwitches[service.id] = toggle
+            let tile = TileView(symbol: "lock.shield", hex: ProfileTint.graphite)
+            vpnRows.addArrangedSubview(toolRow(tile, service.name, VPNController.appName(for: service.provider), toggle))
+        }
     }
 
     // Rebuilt on every open, so a tool first used while the app runs gets its switch.
     private func rebuildTools() {
         toolRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
         toolSwitches.removeAll()
-        toolRows.addArrangedSubview(toolRow(.openAI, "Codex", "Current account, read from local sessions", codexSwitch))
-        toolRows.addArrangedSubview(toolRow(.antigravity, "Antigravity", "Last active time only", antigravitySwitch))
+        toolRows.addArrangedSubview(toolRow(TileView(mark: .openAI), "Codex", "Current account, read from local sessions", codexSwitch))
+        toolRows.addArrangedSubview(toolRow(TileView(mark: .antigravity), "Antigravity", "Last active time only", antigravitySwitch))
         let hidden = Settings.shared.hiddenTools
         for status in LocalTools.listed() {
             let toggle = NSSwitch()
             toggle.setAccessibilityLabel("Show \(status.tool.displayName) in the bar")
             toggle.state = hidden.contains(status.tool.rawValue) ? .off : .on
             toolSwitches[status.tool] = toggle
-            toolRows.addArrangedSubview(toolRow(status.tool.mark, status.tool.displayName, "Shown when used in the last 30 days", toggle))
+            toolRows.addArrangedSubview(toolRow(TileView(mark: status.tool.mark), status.tool.displayName, "Shown when used in the last 30 days", toggle))
         }
     }
 
-    private func toolRow(_ mark: ProviderMark, _ name: String, _ detail: String, _ toggle: NSSwitch) -> NSView {
+    private func toolRow(_ tile: NSView, _ name: String, _ detail: String, _ toggle: NSSwitch) -> NSView {
         let names = UI.column([UI.label(name, weight: .semibold), UI.label(detail, size: 11.5, color: .secondaryLabelColor)], spacing: 1)
-        let row = UI.row([TileView(mark: mark), names, UI.spacer(), toggle], spacing: 12)
+        let row = UI.row([tile, names, UI.spacer(), toggle], spacing: 12)
         UI.fix(row, width: 544, height: UI.rowHeight)
         return row
     }
@@ -457,7 +486,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             [label("CPU and RAM interval:"), systemIntervalPopup],
             [NSGridCell.emptyContentView, binaryCheck],
             [label("Wi-Fi interface:"), interfacePopup],
-            [NSGridCell.emptyContentView, showVPNCheck],
             [NSGridCell.emptyContentView, startAtLoginCheck],
             [label("Usage:"), UI.row([history, resetButton], spacing: 8)],
             [label("Troubleshooting:"), logButton],
@@ -573,6 +601,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         codexSwitch.state = s.showCodex ? .on : .off
         antigravitySwitch.state = s.showAntigravity ? .on : .off
         rebuildTools()
+        rebuildVPNs()
 
         autoLoginCheck.state = s.autoLoginEnabled ? .on : .off
         pollField.stringValue = String(s.pollInterval)
@@ -608,7 +637,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             interfacePopup.selectItem(at: idx ?? 0)
         }
         startAtLoginCheck.state = isLoginItemEnabled() ? .on : .off
-        showVPNCheck.state = s.showVPN ? .on : .off
 
         fitWindowToCurrentContent(animate: false)
         if tabView.selectedTabViewItem?.identifier as? String == portalTabIdentifier { loadPasswordAsync() }
@@ -644,7 +672,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         s.systemInterval = intervalOptions[safe: systemIntervalPopup.indexOfSelectedItem] ?? 2
         s.useBinaryUnits = binaryCheck.state == .on
         s.wifiInterfaceOverride = (interfacePopup.selectedItem?.representedObject as? String) ?? ""
-        s.showVPN = showVPNCheck.state == .on
+        // A hidden VPN that macOS no longer lists stays hidden if it comes back.
+        let listedVPNs = Set(vpnSwitches.keys)
+        s.hiddenVPNs = s.hiddenVPNs.subtracting(listedVPNs).union(vpnSwitches.filter { $0.value.state == .off }.keys)
         setLoginItem(startAtLoginCheck.state == .on)
 
         // A Keychain prompt blocks its caller, so the write stays off the main thread.

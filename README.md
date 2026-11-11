@@ -68,9 +68,9 @@ Click the gauge in the menu bar. For portal sign-in, open **Settings**, choose *
 
 | Tab | What it holds |
 | --- | --- |
-| **Accounts** | Quota as left or used, profile names and colors, what appears, launchers |
+| **Accounts** | Quota as left or used, profile names and colors, what appears, launchers, which VPNs appear |
 | **Portal** | Auto-login, sign-in details, portal marker, and **Diagnose**, which checks the values as typed and sends nothing |
-| **General** | Menu bar content, update intervals, units, Wi-Fi interface, Show VPN in panel, start at login |
+| **General** | Menu bar content, update intervals, units, Wi-Fi interface, start at login |
 
 ## Scripts
 

@@ -567,6 +567,7 @@ extension AppDelegate: StatusPopoverDelegate {
         settingsWC?.onNewProfile = { [weak self] in self?.openNewProfile() }
         settingsWC?.onProfilesChanged = { [weak self] in self?.usageCoordinator.refresh() }
         settingsWC?.onOpenUsageHistory = { [weak self] in self?.openUsageHistory() }
+        settingsWC?.vpnServices = { [weak self] in self?.vpn.services ?? [] }
         settingsWC?.runDiagnostics = { [weak self] loginURL, marker, completion in
             guard !AppMode.isDemo else {
                 completion(["Demo mode: the portal is not checked."])

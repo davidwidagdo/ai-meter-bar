@@ -18,6 +18,9 @@ func testVPN() {
     T.eq(services.map(\.status), [.connected, .off, .connecting, .disconnecting, .invalid], "states, invalid kept apart")
     T.eq(VPNServiceList.status("Unknown"), .off, "an unknown word counts as off")
     T.eq(services.map(\.provider), ["com.example.vpn", "com.example.vpn", nil, "com.other.app", "com.example.vpn"], "VPN app from the bracket")
+    T.eq(VPNServiceList.visible(services, hidden: ["0A1B2C3D-0000-4000-8000-000000000002"]).map(\.name),
+         ["Office", "Spaces in name", "Other", "Broken"], "a hidden VPN leaves the panel by its ID")
+    T.eq(VPNServiceList.visible(services, hidden: []).count, 5, "nothing hidden")
     T.eq(VPNServiceList.parse(""), [], "empty output")
     T.eq(VPNServiceList.parse("Available network connection services in the current set (*=enabled):\n"), [], "header only")
 

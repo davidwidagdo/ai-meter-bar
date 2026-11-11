@@ -34,6 +34,11 @@ enum VPNServiceList {
         }
     }
 
+    // A hidden VPN only leaves the panel; the bar still follows its state.
+    static func visible(_ services: [VPNService], hidden: Set<String>) -> [VPNService] {
+        services.filter { !hidden.contains($0.id) }
+    }
+
     static func status(_ word: String) -> VPNStatus {
         switch word.trimmingCharacters(in: .whitespaces).lowercased() {
         case "connected":     return .connected
