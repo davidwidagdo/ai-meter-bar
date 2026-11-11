@@ -1,6 +1,6 @@
 <h1 align="center">AI Meter Bar</h1>
 
-<p align="center">AI quota, Claude profiles, network meters and captive-portal sign-in, in the macOS menu bar.</p>
+<p align="center">AI quota, Claude profiles, VPN, network meters and Wi-Fi portal sign-in, in the macOS menu bar.</p>
 
 <p align="center">
   <img alt="Swift" src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white">
@@ -9,30 +9,27 @@
 </p>
 
 <p align="center">
-  <img alt="The popover with sample data: Wi-Fi status, four Claude profiles with quota bars, Codex, Antigravity, CPU and RAM" src="docs/screenshot.jpg" width="380">
+  <img alt="The panel with sample data: Wi-Fi status, two VPN rows with connect buttons, four Claude profiles with quota bars, other tools, CPU and RAM" src="docs/screenshot.jpg" width="380">
 </p>
 
 ## Features
 
-- **AI quota.** 5-hour and weekly quota per Claude account, whatever the profile is called, plus live Codex and Antigravity quota. Every reading shows its age, and the menu bar marks each value with its tool.
-- **Claude profiles.** Open any profile in one click, create one with its own launcher and no Automator step, or move one to the Trash.
-- **Other tools.** OpenCode, GitHub Copilot and Cursor show when they were last active, and appear when used in the last 30 days.
-- **Portal sign-in.** Signs in within seconds after a network change or wake.
-- **VPN.** Connect or disconnect each VPN account from the panel, without opening the VPN app. The VPN app keeps its profiles and passwords.
+- **AI quota.** Claude's 5-hour and weekly quota per account, plus live Codex and Antigravity quota. Every number shows its age. OpenCode, GitHub Copilot and Cursor show when they were last used.
+- **Claude profiles.** Open a profile in one click, create one with its own launcher, or move one to the Trash.
+- **VPN.** Connect or disconnect each VPN with one click, without opening the VPN app. Hide the ones you do not need.
+- **Portal sign-in.** Signs in to a Wi-Fi login page by itself after a network change or wake.
 - **Meters.** Speed, today's usage, 30-day history, CPU, RAM and memory pressure.
-- **Light.** Live numbers are read at launch and when you open the panel, nothing stays running for them, and nothing is drawn while the screen sleeps.
+- **Light.** Live AI numbers are read only at launch and when the panel opens, and no helper stays running.
 
 ## How it works
 
-Claude's numbers come from a file Claude keeps. Codex and Antigravity answer live at launch and when the panel opens, and their files are the fallback:
-
 ```mermaid
 flowchart LR
-  A[Claude usage files] --> M[Newest reading per account] --> E[Age rules]
-  P[Launch or panel opens] --> B[Codex's own tool] --> E
-  P --> G[Antigravity's local server] --> E
-  C[File dates of other tools] --> E
-  E --> F[Menu bar and popover]
+  A[Claude usage files] --> P[Panel and menu bar]
+  B[Codex and Antigravity, asked live] --> P
+  V[VPNs in macOS settings] --> P
+  N[Wi-Fi and system counters] --> P
+  P -->|Connect or Disconnect| M[macOS starts or stops the VPN]
 ```
 
 Portal sign-in sends the password only after every check passes:
@@ -42,19 +39,18 @@ flowchart TD
   T[Network change, wake or poll] --> P{Internet works?}
   P -->|yes| C[Connected]
   P -->|no| G{Your portal's page?}
-  G -->|no| I[Idle, nothing sent]
+  G -->|no| I[Nothing sent]
   G -->|yes| H{Form posts to your<br/>portal or gateway?}
   H -->|no| I
-  H -->|yes| L[POST username and<br/>Keychain password]
+  H -->|yes| L[Send username and<br/>Keychain password]
   L --> R{Session live?}
-  R -->|yes| OK[Connected]
+  R -->|yes| C
   R -->|portal still asks| W[Wait 1, 5, then 15 minutes]
-  R -->|no evidence| U[Check again]
 ```
 
 ## Getting started
 
-Requires macOS 26+ on Apple Silicon and the Xcode Command Line Tools. There are no third-party dependencies.
+Requires macOS 26 or later on Apple Silicon and the Xcode Command Line Tools. There are no third-party dependencies.
 
 ```sh
 cd macos-app
@@ -62,15 +58,17 @@ cd macos-app
 open "/Applications/AI Meter Bar.app"
 ```
 
-Click the gauge in the menu bar. For portal sign-in, open **Settings**, choose **Portal**, and enter the username, password and Login URL.
+1. Click the gauge in the menu bar to open the panel.
+2. **Portal sign-in:** open **Settings**, then **Portal**, and enter the username, password and Login URL.
+3. **VPN:** a VPN shows up once it is listed in System Settings, VPN. For OpenVPN Connect this needs version 3.9 or later. Hide any VPN in **Settings**, **Accounts**.
 
 ## Settings
 
 | Tab | What it holds |
 | --- | --- |
-| **Accounts** | Quota as left or used, profile names and colors, what appears, launchers, which VPNs appear |
-| **Portal** | Auto-login, sign-in details, portal marker, and **Diagnose**, which checks the values as typed and sends nothing |
-| **General** | Menu bar content, update intervals, units, Wi-Fi interface, start at login |
+| **Accounts** | Quota as left or used, which profiles, tools and VPNs appear, profile names, colors and launchers |
+| **Portal** | Auto-login, sign-in details, portal marker, and **Diagnose**, which checks the typed values and sends nothing |
+| **General** | Menu bar content, update intervals, units, Wi-Fi interface, start at login, usage history |
 
 ## Scripts
 
@@ -79,26 +77,25 @@ Click the gauge in the menu bar. For portal sign-in, open **Settings**, choose *
 | `macos-app/build.sh` | Builds the app and a `.dmg`; `--no-dmg` skips the image, `--install` copies the app to `/Applications` |
 | `macos-app/Tests/run.sh` | Unit tests |
 | `macos-app/make-appicon.swift` | Regenerates the app icon |
-| `discover-portal.sh` | Shows a portal's login form when the app cannot read it |
+| `discover-portal.sh` | Shows a portal's login form when the app cannot read it; copy `config.example` to `config` first |
 
-## Security
+## Security and privacy
 
-- The password lives only in the Keychain, and logs never contain it, the portal address or an IP.
-- The bar holds no AI login. Codex's own tool does its own sign-in and ends right after answering, and Antigravity is asked only on this Mac's loopback address.
-- It is sent only to the Login URL's address, or to the Wi-Fi gateway once your portal marker matches. Anything else is refused.
+- The portal password lives only in the Keychain, and goes only to the Login URL's address, or to the Wi-Fi gateway once your portal marker matches.
+- Logs never contain a password, portal address, IP or VPN name.
+- The bar holds no AI login. Codex's own tool signs itself in and ends after answering; Antigravity is asked only on this Mac's loopback address.
+- The VPN app keeps its profiles and passwords. The bar stores only the IDs of VPNs you hide.
 - Portals use plain HTTP, so sign in only on networks you trust.
 
 ## Limits
 
-- Claude's usage is only as fresh as Claude's last save, which is why every row shows its age. Claude pauses its own check when its menu bar menu has not been used for 24 hours, so use **Refresh** there.
-- Antigravity's quota needs the app to be open, and its local server is not a public interface, so an update could change it.
-- An account that reports only a weekly value shows **No 5h**.
-- Separate profiles rely on Claude's `--user-data-dir` option, which an update could change.
-- VPN control lists only VPNs macOS knows, those under System Settings, VPN. OpenVPN Connect is there from version 3.9; older versions do not show.
+- Claude's usage is only as fresh as Claude's last save. When Claude pauses its own check, use **Refresh** in Claude's menu bar menu.
+- Antigravity's quota needs Antigravity to be open. Its local server and Claude's `--user-data-dir` option are not public interfaces, so an update could change them.
+- One VPN app runs one tunnel at a time, so connecting a second profile of the same app ends the first.
 - MikroTik CHAP portals are not supported. **Diagnose** tells you if a page looks like one.
 - Builds are ad-hoc signed unless you set `CODESIGN_IDENTITY`, so each rebuild asks once for Keychain access.
 
-More detail for developers is in [macos-app/README.md](macos-app/README.md).
+Developer notes: [macos-app/README.md](macos-app/README.md).
 
 ## Credits
 

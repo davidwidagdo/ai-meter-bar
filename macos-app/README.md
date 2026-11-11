@@ -14,6 +14,7 @@ Developer notes. See the [main README](../README.md) for what the app does.
 | Area | Files |
 | --- | --- |
 | Portal sign-in | `PortalClient`, `LoginForm`, `LoginOutcome`, `LoginThrottle`, `PortalDiagnostics`, `Keychain` |
+| VPN | `VPN` (list parser and row model), `VPNController` |
 | Meters | `MeterClock`, `SpeedMonitor`, `SystemMonitor`, `UsageStore`, `UsageHistoryWindowController` |
 | AI usage | `LocalUsageReaders`, `LiveUsage`, `UsageModels`, `AIUsageCoordinator` |
 | Claude profiles | `ClaudeProfiles`, `ClaudeInstances`, `ClaudeLauncher`, `Monogram`, `NewProfileWindowController` |
@@ -21,19 +22,26 @@ Developer notes. See the [main README](../README.md) for what the app does.
 
 ## Behavior worth knowing
 
-- **Panel grid.** `UI` holds the tile, row and action sizes, and every card's rows use them, so columns line up from the header to Recent Sessions.
-- **Live numbers.** At launch and when the panel opens, at most every 30 seconds. Codex: runs `codex app-server` from a fixed path, asks for rate limits, and ends it. Antigravity: finds its `language_server`, takes the session value from that process's arguments, and posts to the loopback ports that process owns, with no redirects. The value is never stored or logged, and the account fields in the reply are not read.
-- **Accounts.** Each usage sample names its account. Folders on one account show its newest reading, and the account ID is never shown or logged.
-- **Move to Trash.** Settings, Accounts, the row's menu. Never Default or a running profile, and only a launcher this app built goes with it.
-- **Auto-login off.** Nothing signs in by itself, so the panel offers Sign in Now whenever the Mac is offline.
-- **Sign-in results.** A login only counts as failed when the portal still asks for credentials. No evidence, or a sleep during the check, means check again.
-- **Sleep.** Automatic checks stop while the Mac sleeps, including dark wakes. Locking the screen does not stop them.
-- **After a rejection.** Automatic attempts wait 1, 5, then 15 minutes, and each network keeps its own wait. Sign in Now and saving Settings clear it. Sign in Now during an automatic check runs right after that check.
-- **Login URL.** Without one, a form goes only to the Wi-Fi gateway, and only once a Portal marker matches. One that points at this Mac is refused.
-- **Portal marker.** Use text only your portal's page shows, or its domain. A value found in the app's own addresses, such as the Apple probe URL or `<gateway>/login`, is ignored, and **Diagnose** says so. It filters honest networks and is not proof of identity.
-- **Form targets.** A form must post to the Login URL's scheme, host and port, or upgrade it to https. An unreadable target is refused.
-- **Redirects.** Followed only over http and https. Loopback addresses are refused, but a name or LAN address that reaches this Mac is not detected.
-- **VPNs.** With a Portal marker set and an http Login URL, the app reaches the portal through the Wi-Fi gateway, so a VPN that owns DNS cannot hide its name. The gateway's own `/login` page is tried first; otherwise the portal is reached by its name, and through the gateway only if the name does not answer. An https Login URL always uses the portal's own name, so TLS can check it.
-- **VPN control.** Lists services with `scutil --nc list` at launch, on panel open, wake and Save; status then comes from `SCNetworkConnection` events. Connect waits 45 seconds, a connect that drops back is shown as failed and offers the VPN's own app. Several accounts each get a row, and Settings, Accounts can hide any of them; one VPN app runs one tunnel at a time. No profile, password, host or name is stored or logged; only the IDs of hidden VPNs stay in the app's preferences.
-- **Saving the password.** Replaces the Keychain item, so it always has this app's own access list, and puts the old value back if the save fails.
+**Portal**
+- **Gates.** The page must hold a login form, or the Portal marker when one is set. A form must post to the Login URL's scheme, host and port, or upgrade it to https. Without a Login URL, it goes only to the Wi-Fi gateway after the marker matches.
+- **Marker.** Use text only your portal's page shows. A value found in the app's own addresses, such as the Apple probe URL or `<gateway>/login`, is ignored, and **Diagnose** says so.
+- **VPN owns DNS.** With a marker and an http Login URL, the gateway's own `/login` page is tried first, then the portal's name, and the gateway again only if the name does not answer. An https Login URL always uses the portal's name, so TLS can check it.
+- **Results.** A login fails only when the portal still asks for credentials. No evidence, or a sleep during the check, means check again.
+- **After a rejection.** Automatic attempts wait 1, 5, then 15 minutes, per network. Sign in Now and saving Settings clear the wait.
+- **Sleep.** Automatic checks stop while the Mac sleeps, including dark wakes.
+- **Redirects.** Followed only over http and https, never to a loopback address.
+- **Password.** Saving replaces the Keychain item, so it keeps this app's access list, and restores the old value if the save fails.
 - **HTTP.** `NSAllowsArbitraryLoads` is on because portals and the connectivity probe use plain HTTP.
+
+**AI usage**
+- **Live numbers.** At launch and on panel open, at most every 30 seconds. Codex: `codex app-server` from a fixed path, asked for rate limits, then ended. Antigravity: its `language_server` on the loopback ports that process owns. Session values are never stored or logged.
+- **Accounts.** Each Claude sample names its account; profiles on one account show its newest reading. The account ID is never shown or logged.
+
+**VPN**
+- **Listing.** `scutil --nc list` at launch, panel open, wake and Save. A failed listing keeps the last one. Status then comes from `SCNetworkConnection` events, with no polling.
+- **Connect.** Lingers, so the VPN stays up when the bar quits. A connect waits 45 seconds; one that drops back shows as failed and offers the VPN's own app. Stop works while connecting.
+- **Privacy.** No VPN profile, password, host or name is stored or logged. Only the IDs of hidden VPNs stay in the app's preferences.
+
+**Interface**
+- **Panel grid.** `UI` holds the tile, row and action sizes, so columns line up from the header to Recent Sessions.
+- **Move to Trash.** Never Default or a running profile, and only a launcher this app built goes with it.
