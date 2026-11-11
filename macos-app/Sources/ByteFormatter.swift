@@ -7,25 +7,27 @@ enum ByteFormatter {
     // Overridable so tests can pin decimal separators; the app uses the user's locale.
     static var locale: Locale = .current
 
-    private static let rateUnits  = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"]
     private static let totalUnits = ["B", "KB", "MB", "GB", "TB"]
+    private static let binaryUnits = ["B", "KiB", "MiB", "GiB", "TiB"]
 
     private static let number: NumberFormatter = {
         let f = NumberFormatter()
         f.numberStyle = .decimal
         f.minimumFractionDigits = 0       // trailing zeros trimmed: 1.50 -> "1.5"
         f.roundingMode = .halfUp
+        // Binary units allow 1000-1023, and "1.023" reads as one in id_ID.
+        f.usesGroupingSeparator = false
         return f
     }()
 
     // Live speed for the menu bar — compact (few decimals).
     static func speed(_ bytesPerSec: Double, binary: Bool = false) -> String {
-        format(bytesPerSec, units: rateUnits, binary: binary, compact: true)
+        format(bytesPerSec, units: (binary ? binaryUnits : totalUnits).map { $0 + "/s" }, binary: binary, compact: true)
     }
 
     // Cumulative totals for the dropdown / history — a touch more precision.
     static func total(_ bytes: UInt64, binary: Bool = false) -> String {
-        format(Double(bytes), units: totalUnits, binary: binary, compact: false)
+        format(Double(bytes), units: binary ? binaryUnits : totalUnits, binary: binary, compact: false)
     }
 
     private static func format(_ value: Double, units: [String], binary: Bool, compact: Bool) -> String {

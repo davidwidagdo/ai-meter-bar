@@ -34,6 +34,24 @@ func testProfileNames() {
          "/h/Library/Application Support/Claude-Max", "flag with spaces")
     T.eq(ProcessArgs.userDataDir(["/x/Claude"]), nil, "no flag")
 
+    let root = URL(fileURLWithPath: "/h/Library/Application Support")
+    let folders = ["Claude", "Claude-Max"]
+    T.eq(ClaudeProfiles.runningFolder(userDataDir: nil, root: root, folders: folders), "Claude", "no flag is the default profile")
+    T.eq(ClaudeProfiles.runningFolder(userDataDir: "/h/Library/Application Support/Claude-Max", root: root, folders: folders),
+         "Claude-Max", "exact folder")
+    T.eq(ClaudeProfiles.runningFolder(userDataDir: "/h/Library/Application Support/claude-max/", root: root, folders: folders),
+         "Claude-Max", "another case and a trailing slash map to the real folder")
+    T.eq(ClaudeProfiles.runningFolder(userDataDir: "/tmp/Claude-Max", root: root, folders: folders), nil,
+         "a same-named folder elsewhere is no profile")
+    T.eq(ClaudeProfiles.runningFolder(userDataDir: "/h/Library/Application Support/x/../Claude-Max", root: root, folders: folders),
+         "Claude-Max", "dot segments are resolved")
+    T.eq(ProfileNames.check("Work Mac", existing: ["Work Mac"]), .taken, "a renamed profile with spaces is taken")
+    T.eq(ProfileNames.check("work-mac", existing: ["Work Mac"]), .taken, "the same name with a hyphen is taken")
+    T.expect(ProfileNames.sameName("Work Mac", "work-mac"), "case, spaces and hyphens do not make names differ")
+    T.expect(!ProfileNames.sameName("Work", "Workshop"), "different names differ")
+    T.eq(ClaudeProfiles.find(name: "MY WORK", in: [ClaudeProfile(folder: "Claude-Old", name: "My-Work", url: URL(fileURLWithPath: "/x"))])?.folder,
+         "Claude-Old", "find matches names the same way the check does")
+
     var raw = Data([3, 0, 0, 0])
     for part in ["/x/Claude\0\0\0", "/x/Claude\0", "--a=1\0", "--user-data-dir=/h/C\0", "KEY=VALUE\0"] {
         raw.append(contentsOf: Array(part.utf8))
@@ -203,7 +221,7 @@ func testProfileSelection() {
     let soon = CodexReading(primary: CodexWindow(usedPercent: 18, windowMinutes: 300, resetsAt: now.addingTimeInterval(3600)),
                             secondary: CodexWindow(usedPercent: 41, windowMinutes: 10080, resetsAt: now.addingTimeInterval(86400)))
     var row = CodexRowModel.make(soon, showLeft: true, now: now)
-    T.eq(row.detail, "Resets 1h", "codex reset countdown")
+    T.eq(row.detail, "5h resets in 1h", "codex reset countdown names its window")
     T.eq(row.fiveHour.text, "82%", "codex short window left")
     T.eq(row.week.text, "59%", "codex long window left")
     let weeklyFirst = CodexReading(primary: CodexWindow(usedPercent: 41, windowMinutes: 10080, resetsAt: now.addingTimeInterval(86400)),
@@ -212,15 +230,18 @@ func testProfileSelection() {
     row = CodexRowModel.make(weeklyFirst, showLeft: true, now: now)
     T.eq(row.fiveHour.text, "82%", "window length decides the 5 hour column")
     T.eq(row.week.text, "59%", "window length decides the week column")
-    T.eq(row.detail, "Resets 1h · 12m ago", "codex shows its age")
+    T.eq(row.detail, "5h resets in 1h · 12m ago", "codex shows its age")
     let unknownLength = CodexReading(primary: CodexWindow(usedPercent: 18, windowMinutes: nil, resetsAt: nil), secondary: nil)
     T.eq(CodexRowModel.make(unknownLength, showLeft: true, now: now).fiveHour.text, "82%", "no length falls back to position")
     T.eq(CodexRowModel.make(unknownLength, showLeft: true, now: now).detail, "Current account", "no reset and no age")
     let passed = CodexReading(primary: CodexWindow(usedPercent: 90, windowMinutes: 300, resetsAt: now.addingTimeInterval(-5)), secondary: nil)
     row = CodexRowModel.make(passed, showLeft: true, now: now)
-    T.eq(row.detail, "Reset", "codex reset passed")
+    T.eq(row.detail, "5h reset", "codex reset passed")
     T.eq(row.fiveHour.text, "100%", "passed window counts as unused")
     T.eq(row.week.text, "—", "missing window shows a dash")
+    let weeklyOnly = CodexReading(primary: nil, secondary: CodexWindow(usedPercent: 10, windowMinutes: 10080, resetsAt: now.addingTimeInterval(7200)),
+                                  date: now.addingTimeInterval(-30))
+    T.eq(CodexRowModel.make(weeklyOnly, showLeft: true, now: now).detail, "Week resets in 2h", "a weekly-only reading names its window, fresh has no age")
 }
 
 func testProfileCreate() {

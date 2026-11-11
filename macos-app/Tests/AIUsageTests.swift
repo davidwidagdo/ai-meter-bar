@@ -48,6 +48,10 @@ func testLiveParsers() {
     T.expect(CodexAppServerParser.reading(fromLine: data(#"{"id":2,"error":{"code":1}}"#), now: now) == nil, "an error is ignored")
     T.expect(CodexAppServerParser.reading(fromLine: data(#"{"id":2,"result":{"rateLimits":{}}}"#), now: now) == nil, "no windows")
     T.expect(CodexAppServerParser.reading(fromLine: data("garbage"), now: now) == nil, "garbage")
+    T.expect(CodexAppServerParser.isReply(data(#"{"id":2,"error":{"code":1}}"#)), "an error reply ends the wait")
+    T.expect(!CodexAppServerParser.isReply(data(#"{"id":1,"result":{}}"#)), "another reply does not end the wait")
+    T.expect(!CodexAppServerParser.isReply(data(#"{"method":"x"}"#)), "a notification does not end the wait")
+    T.expect(!CodexAppServerParser.isReply(data("garbage")), "garbage does not end the wait")
 
     let old = CodexReading(primary: nil, secondary: nil, date: now.addingTimeInterval(-60))
     let fresh = CodexReading(primary: nil, secondary: nil, date: now)
@@ -102,11 +106,17 @@ func testLiveParsers() {
     func model(_ age: TimeInterval, _ item: AntigravityQuota = quota) -> AntigravityRowModel {
         AntigravityRowModel.make(AntigravityStatus(lastActive: now, model: "m", live: AntigravityLive(plan: "Pro", quotas: [item], date: now.addingTimeInterval(-age))), showLeft: true, now: now)
     }
-    T.eq(model(0).detail, "Pro · now", "live detail")
+    T.eq(model(0).detail, "Pro plan", "live detail needs no age")
     T.eq(model(0).quotas.first?.cell.text, "20%", "live quota left")
-    T.eq(model(0).quotas.first?.reset, "Resets 10m", "live quota reset")
+    T.eq(model(0).quotas.first?.reset, "Resets in 10m", "live quota reset")
     T.eq(model(7200).quotas.first?.cell.text, "~20%", "older live quota is marked")
-    T.eq(model(7200).detail, "Pro · 2h ago", "older live detail")
+    T.eq(model(7200).detail, "Pro plan · 2h ago", "older live detail")
+    func liveDetail(plan: String?, age: TimeInterval) -> String {
+        AntigravityRowModel.make(AntigravityStatus(lastActive: now, model: nil, live: AntigravityLive(plan: plan, quotas: [], date: now.addingTimeInterval(-age))), showLeft: true, now: now).detail
+    }
+    T.eq(liveDetail(plan: "Team Plan", age: 0), "Team Plan", "a plan name that says plan is not doubled")
+    T.eq(liveDetail(plan: nil, age: 0), "Updated now", "no plan, fresh")
+    T.eq(liveDetail(plan: nil, age: 7200), "Updated 2h ago", "no plan, older")
     T.eq(model(6 * 3600).quotas.first?.cell.text, "—", "expired live quota")
     let passed = AntigravityQuota(name: "A", fullName: "A", left: 0.2, resetsAt: now.addingTimeInterval(-60))
     T.eq(model(0, passed).quotas.first?.cell.text, "100%", "a passed reset is full")
@@ -182,13 +192,19 @@ func testClaudeUsageParser() {
         T.eq(r.weekUsed, 12, "sd read without fh")
     } else { T.expect(false, "missing fh still parses") }
 
-    let mixed = #"{"samples":[{"t":1000,"org":"a","u":{"fh":5,"sd":6}},{"t":2000,"org":"b","u":{"sd":7}},{"t":3000,"org":"c","u":{}}]}"#
+    let mixed = #"{"samples":[{"t":1000,"org":"a","u":{"fh":5,"sd":6}},{"t":2000,"org":"b","u":{"sd":7}},{"t":2500,"org":"b","u":{}}]}"#
     if case .reading(let r) = ClaudeUsageParser.parse(data(mixed)) {
         T.eq(r.date, Date(timeIntervalSince1970: 2), "empty sample is skipped")
         T.eq(r.account, "b", "account comes from the same sample")
         T.eq(r.fiveHourUsed, nil, "a weekly-only sample has no 5h")
         T.eq(r.weekUsed, 7, "weekly-only value")
     } else { T.expect(false, "mixed samples parse") }
+    let switched = #"{"samples":[{"t":1000,"org":"b","u":{"fh":5,"sd":7}},{"t":3000,"org":"c","u":{}}]}"#
+    if case .reading(let r) = ClaudeUsageParser.parse(data(switched)) {
+        T.eq(r.account, "c", "a new account keeps its own id")
+        T.eq(r.date, Date(timeIntervalSince1970: 3), "a new account keeps its own date")
+        T.eq(r.weekUsed, nil, "a new account never shows the old account's values")
+    } else { T.expect(false, "account switch parses") }
     if case .reading(let r) = ClaudeUsageParser.parse(data(#"{"samples":[{"t":4000,"u":{}}]}"#)) {
         T.eq(r.date, Date(timeIntervalSince1970: 4), "only empty samples keep the last date")
         T.eq(r.weekUsed, nil, "only empty samples have no value")
@@ -228,6 +244,16 @@ func testCodexUsageParser() {
     T.eq(CodexUsageParser.lastReading(tail: data(noise), dropFirstLine: false), nil, "no limits")
     T.eq(CodexUsageParser.lastReading(tail: data(String(line.dropFirst(12)) + "\n"), dropFirstLine: true), nil, "partial first line skipped")
     T.eq(CodexUsageParser.lastReading(tail: data(line + "\n{\"broken"), dropFirstLine: false)?.primary?.usedPercent, 18, "truncated last line skipped")
+    T.eq(CodexUsageParser.lastReading(tail: data(line), dropFirstLine: false)?.date, nil, "an unreadable time falls back to the file date")
+    let timed = line.replacingOccurrences(of: #""timestamp":"t""#, with: #""timestamp":"2026-11-11T03:04:05.678Z""#)
+    T.eq(CodexUsageParser.lastReading(tail: data(timed + "\n" + noise + "\n"), dropFirstLine: false)?.date,
+         Date(timeIntervalSince1970: 1_794_366_245.678), "the event's own time dates the reading")
+    let plain = line.replacingOccurrences(of: #""timestamp":"t""#, with: #""timestamp":"2026-11-11T03:04:05Z""#)
+    T.eq(CodexUsageParser.lastReading(tail: data(plain), dropFirstLine: false)?.date,
+         Date(timeIntervalSince1970: 1_794_366_245), "a time without fractions also parses")
+    T.eq(TokenFormat.short(999_949), "999.9K", "just under a million stays in K")
+    T.eq(TokenFormat.short(999_960), "1.0M", "a value that rounds to 1000K becomes 1.0M")
+    T.eq(TokenFormat.short(1_500), "1.5K", "thousands")
 }
 
 func testCodexFiles() {
@@ -279,5 +305,5 @@ func testSessionParser() {
     let oldRow = ProfileRowModel.make(name: "Max", usage: ClaudeUsageParser.parse(data(hugePast)), running: false, showLeft: true, now: hugeNow)
     T.expect(oldRow.status.contains("365000d"), "huge past sample builds a clamped row")
     let hugeReset = CodexReading(primary: CodexWindow(usedPercent: 7, windowMinutes: 300, resetsAt: Date(timeIntervalSince1970: 1e300)), secondary: nil)
-    T.eq(CodexRowModel.make(hugeReset, showLeft: true, now: hugeNow).detail, "Resets 365000d", "huge reset date builds a clamped row")
+    T.eq(CodexRowModel.make(hugeReset, showLeft: true, now: hugeNow).detail, "5h resets in 365000d", "huge reset date builds a clamped row")
 }

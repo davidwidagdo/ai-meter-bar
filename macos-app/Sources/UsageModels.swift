@@ -53,7 +53,8 @@ enum RelativeAge {
 
 enum TokenFormat {
     static func short(_ tokens: Int) -> String {
-        if tokens >= 1_000_000 { return String(format: "%.1fM", Double(tokens) / 1_000_000) }
+        // From 999,950 the K form would round up to "1000.0K".
+        if tokens >= 999_950 { return String(format: "%.1fM", Double(tokens) / 1_000_000) }
         if tokens >= 1_000 { return String(format: "%.1fK", Double(tokens) / 1_000) }
         return "\(tokens)"
     }
@@ -195,12 +196,13 @@ struct CodexRowModel: Equatable {
         }
         let windows = columns(reading)
         var parts: [String] = []
-        if let reset = (windows.short ?? windows.long)?.resetsAt {
-            parts.append(reset <= now ? "Reset" : "Resets \(RelativeAge.short(reset.timeIntervalSince(now)))")
+        let window = windows.short.map { ("5h", $0) } ?? windows.long.map { ("Week", $0) }
+        if let (name, window) = window, let reset = window.resetsAt {
+            parts.append(reset <= now ? "\(name) reset" : "\(name) resets in \(RelativeAge.short(reset.timeIntervalSince(now)))")
         }
-        if let date = reading.date {
-            let elapsed = RelativeAge.short(now.timeIntervalSince(date))
-            parts.append(elapsed == "now" ? "now" : "\(elapsed) ago")
+        // A fresh reading needs no age; an older one says how old it is.
+        if let date = reading.date, RelativeAge.short(now.timeIntervalSince(date)) != "now" {
+            parts.append(LastActive.ago(date, now: now))
         }
         return CodexRowModel(detail: parts.isEmpty ? "Current account" : parts.joined(separator: " · "),
                              fiveHour: cell(windows.short, age.map(QuotaMath.fiveHourFreshness) ?? .fresh),
@@ -251,10 +253,12 @@ struct AntigravityRowModel: Equatable {
             let cell = passed
                 ? QuotaCell.make(used: 0, freshness: freshness == .fresh ? .fresh : .stale, showLeft: showLeft)
                 : QuotaCell.make(used: (1 - quota.left) * 100, freshness: freshness, showLeft: showLeft)
-            let reset = quota.resetsAt.map { passed ? "Reset" : "Resets \(RelativeAge.short($0.timeIntervalSince(now)))" } ?? ""
+            let reset = quota.resetsAt.map { passed ? "Reset" : "Resets in \(RelativeAge.short($0.timeIntervalSince(now)))" } ?? ""
             return Quota(name: quota.name, fullName: quota.fullName, reset: reset, cell: cell)
         }
-        return AntigravityRowModel(detail: live.plan.map { "\($0) · \(age)" } ?? "Updated \(age)", quotas: quotas)
+        let plan = live.plan.map { $0.lowercased().hasSuffix("plan") ? $0 : "\($0) plan" }
+        let detail = age == "now" ? (plan ?? "Updated now") : plan.map { "\($0) · \(age)" } ?? "Updated \(age)"
+        return AntigravityRowModel(detail: detail, quotas: quotas)
     }
 }
 

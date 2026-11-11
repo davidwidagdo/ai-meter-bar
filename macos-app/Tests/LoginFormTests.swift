@@ -62,6 +62,16 @@ func testLoginForm() {
     T.expect(LoginFormParser.redirectURL(html: status, base: base) == nil, "status page is not followed")
     T.expect(!LoginFormParser.isSessionPage(html: login), "login page is not a session")
 
+    let unquoted = "<form action=/login method=post><input type=text name=user><input type=password name=pass></form>"
+    let bare = LoginFormParser.parse(html: unquoted)
+    T.eq(bare?.action ?? "", "/login", "unquoted action")
+    T.eq(bare?.fields.map(\.name) ?? [], ["user", "pass"], "unquoted names")
+    T.eq(bare?.fields.map(\.type) ?? [], ["text", "password"], "unquoted types")
+    let dataAttrs = #"<form action="/l"><input data-type="x" type="password" data-name="y" name="pw"></form>"#
+    T.eq(LoginFormParser.parse(html: dataAttrs)?.fields.first?.type ?? "", "password", "data-type is not read as type")
+    T.eq(LoginFormParser.parse(html: dataAttrs)?.fields.first?.name ?? "", "pw", "data-name is not read as name")
+    T.eq(CaptivePage(url: nil, html: login).route, nil, "a page has no route unless one is given")
+
     let named = URL(string: "http://portal.example/login?dst=x")!
     T.eq(PortalRoute.url(URL(string: "http://portal.example:8080/login")!, portalHost: "portal.example", gateway: "10.0.0.1").absoluteString,
          "http://10.0.0.1:8080/login", "the portal's port is kept")

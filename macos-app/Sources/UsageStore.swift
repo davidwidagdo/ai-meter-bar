@@ -51,9 +51,17 @@ final class UsageStore {
         return f
     }()
 
-    // Stable, calendar-local day key.
+    // Calendar-local day key; the zone is rechecked because the formatter keeps the launch zone.
     static func dayString(_ date: Date) -> String {
-        dayFormatter.string(from: date)
+        if dayFormatter.timeZone != .current { dayFormatter.timeZone = .current }
+        return dayFormatter.string(from: date)
+    }
+
+    // Totals for the last `days` calendar days to today, whether or not the app ran on each.
+    static func totals(_ rows: [DayUsage], days: Int, today: Date, calendar: Calendar = .current) -> (rx: UInt64, tx: UInt64) {
+        guard let first = calendar.date(byAdding: .day, value: -(days - 1), to: today) else { return (0, 0) }
+        let cutoff = dayString(first)
+        return rows.filter { $0.day >= cutoff }.reduce((0, 0)) { ($0.0 &+ $1.rx, $0.1 &+ $1.tx) }
     }
 
     func add(rx: UInt64, tx: UInt64, downRate: Double, upRate: Double) {

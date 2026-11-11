@@ -5,6 +5,7 @@ private final class LineReader: @unchecked Sendable {
     private let done = DispatchSemaphore(value: 0)
     private var buffer = Data()
     private var result: CodexReading?
+    private var finished = false
     private let now: Date
     private let maxBytes = 1_000_000
 
@@ -13,9 +14,9 @@ private final class LineReader: @unchecked Sendable {
     func consume(_ chunk: Data) {
         lock.lock()
         defer { lock.unlock() }
-        guard result == nil else { return }
+        guard !finished else { return }
         if chunk.isEmpty || buffer.count + chunk.count > maxBytes {
-            done.signal()
+            finish()
             return
         }
         buffer.append(chunk)
@@ -24,10 +25,19 @@ private final class LineReader: @unchecked Sendable {
             buffer.removeSubrange(buffer.startIndex...newline)
             if let reading = CodexAppServerParser.reading(fromLine: line, now: now) {
                 result = reading
-                done.signal()
+                finish()
+                return
+            }
+            if CodexAppServerParser.isReply(line) {
+                finish()
                 return
             }
         }
+    }
+
+    private func finish() {
+        finished = true
+        done.signal()
     }
 
     func wait(timeout: TimeInterval) -> CodexReading? {
@@ -55,6 +65,11 @@ enum CodexAppServer {
         process.arguments = ["app-server"]
         // The caller's folder could hold project settings the tool would load.
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+        // An npm install starts with env node, and a login item gets only the system PATH.
+        var environment = ProcessInfo.processInfo.environment
+        let folder = (path as NSString).deletingLastPathComponent
+        environment["PATH"] = ([folder, "/opt/homebrew/bin", "/usr/local/bin"] + [environment["PATH"] ?? "/usr/bin:/bin"]).joined(separator: ":")
+        process.environment = environment
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice

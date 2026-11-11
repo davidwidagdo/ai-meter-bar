@@ -3,13 +3,15 @@ import Cocoa
 final class UsageHistoryWindowController: NSWindowController, NSWindowDelegate,
                                           NSTableViewDataSource, NSTableViewDelegate {
     private let table = NSTableView()
-    private let summary = NSTextField(labelWithString: "")
+    private let week = UsageHistoryWindowController.statValue()
+    private let month = UsageHistoryWindowController.statValue()
+    private let peak = UsageHistoryWindowController.statValue()
     private var rows: [DayUsage] = []
     private var maxTotal: UInt64 = 1
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 440),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -23,11 +25,6 @@ final class UsageHistoryWindowController: NSWindowController, NSWindowDelegate,
 
     private func buildUI() {
         guard let content = window?.contentView else { return }
-
-        summary.translatesAutoresizingMaskIntoConstraints = false
-        summary.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        summary.lineBreakMode = .byWordWrapping
-        summary.maximumNumberOfLines = 2
 
         configureColumns()
         table.usesAlternatingRowBackgroundColors = true
@@ -60,7 +57,13 @@ final class UsageHistoryWindowController: NSWindowController, NSWindowDelegate,
             scroll.trailingAnchor.constraint(equalTo: tableBox.trailingAnchor),
         ])
 
-        let summaryBar = GlassPanel.wrap(summary, cornerRadius: 12, padding: 10)
+        let summaryBar = NSStackView(views: [
+            stat("Last 7 days", week), stat("Last 30 days", month), stat("Today's peak", peak),
+        ])
+        summaryBar.orientation = .horizontal
+        summaryBar.distribution = .fillEqually
+        summaryBar.spacing = 10
+        summaryBar.translatesAutoresizingMaskIntoConstraints = false
 
         content.addSubview(summaryBar)
         content.addSubview(tableBox)
@@ -81,6 +84,8 @@ final class UsageHistoryWindowController: NSWindowController, NSWindowDelegate,
             c.title = title
             c.width = width
             c.minWidth = 60          // allow columns to compress so none is clipped
+            // Numbers sit on the right, so their header does too.
+            if id != "date" { c.headerCell.alignment = .right }
             return c
         }
         // Widths sum below the window's content area so all four columns fit.
@@ -105,21 +110,13 @@ final class UsageHistoryWindowController: NSWindowController, NSWindowDelegate,
         maxTotal = max(1, rows.map { $0.total }.max() ?? 1)
 
         let binary = Settings.shared.useBinaryUnits
-        let last7 = rows.prefix(7)
-        let last30 = rows
-        func sum(_ days: ArraySlice<DayUsage>) -> (UInt64, UInt64) {
-            days.reduce((0, 0)) { ($0.0 &+ $1.rx, $0.1 &+ $1.tx) }
-        }
-        let (rx7, tx7) = sum(last7)
-        let (rx30, tx30) = sum(last30[...])
-        let peak = rows.first
-        let peakStr = peak.map {
-            "  •  Today's peak ↓ \(ByteFormatter.speed($0.peakDown, binary: binary)) ↑ \(ByteFormatter.speed($0.peakUp, binary: binary))"
-        } ?? ""
-        summary.stringValue =
-            "Last 7 days: ↓ \(ByteFormatter.total(rx7, binary: binary))  ↑ \(ByteFormatter.total(tx7, binary: binary))" +
-            "     Last 30 days: ↓ \(ByteFormatter.total(rx30, binary: binary))  ↑ \(ByteFormatter.total(tx30, binary: binary))" +
-            peakStr
+        let now = Date()
+        let (rx7, tx7) = UsageStore.totals(rows, days: 7, today: now)
+        let (rx30, tx30) = UsageStore.totals(rows, days: 30, today: now)
+        week.stringValue = "↓ \(ByteFormatter.total(rx7, binary: binary)) ↑ \(ByteFormatter.total(tx7, binary: binary))"
+        month.stringValue = "↓ \(ByteFormatter.total(rx30, binary: binary)) ↑ \(ByteFormatter.total(tx30, binary: binary))"
+        let today = UsageStore.shared.today
+        peak.stringValue = "↓ \(ByteFormatter.speed(today.peakDown, binary: binary)) ↑ \(ByteFormatter.speed(today.peakUp, binary: binary))"
 
         table.reloadData()
     }
@@ -140,18 +137,45 @@ final class UsageHistoryWindowController: NSWindowController, NSWindowDelegate,
             return cell
         }
 
-        let text: String
         switch column.identifier.rawValue {
-        case "date": text = usage.day
-        case "down": text = ByteFormatter.total(usage.rx, binary: binary)
-        case "up":   text = ByteFormatter.total(usage.tx, binary: binary)
-        default:     text = ""
+        case "date": return TextCell(usage.day, alignment: .left)
+        case "down": return TextCell(ByteFormatter.total(usage.rx, binary: binary), alignment: .right)
+        case "up":   return TextCell(ByteFormatter.total(usage.tx, binary: binary), alignment: .right)
+        default:     return nil
         }
-        let field = NSTextField(labelWithString: text)
-        field.font = NSFont.systemFont(ofSize: 12)
+    }
+
+    private static func statValue() -> NSTextField {
+        let field = NSTextField(labelWithString: "")
+        field.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
         field.lineBreakMode = .byTruncatingTail
         return field
     }
+
+    private func stat(_ title: String, _ value: NSTextField) -> NSView {
+        let column = UI.column([UI.label(title, size: 11.5, color: .secondaryLabelColor), value], spacing: 3)
+        return GlassPanel.wrap(column, cornerRadius: 12, padding: 10)
+    }
+}
+
+// Centred on the row like the Total cell, so every column shares one baseline.
+private final class TextCell: NSView {
+    init(_ text: String, alignment: NSTextAlignment) {
+        super.init(frame: .zero)
+        let field = NSTextField(labelWithString: text)
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.alignment = alignment
+        field.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        field.lineBreakMode = .byTruncatingTail
+        addSubview(field)
+        NSLayoutConstraint.activate([
+            field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            field.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { nil }
 }
 
 // A table cell that draws a subtle proportional bar behind right-aligned text.

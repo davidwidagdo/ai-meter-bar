@@ -64,7 +64,15 @@ final class PopoverContentView: NSStackView {
     private let weekHeader = UI.label("Week left", size: 11.5, color: .secondaryLabelColor)
     private let profileRows = UI.column([], spacing: 0)
     private lazy var pausedHint: NSStackView = {
-        let row = UI.row([UI.wrappingLabel("Claude paused its usage check. Click its menu bar icon, then Refresh.", size: 11.5, width: 320)])
+        let icon = NSImageView(image: UI.symbol("info.circle", size: 12) ?? NSImage())
+        icon.contentTintColor = .secondaryLabelColor
+        icon.setAccessibilityElement(false)
+        let text = "Claude paused updates: open its menu, then Refresh."
+        let label = UI.label(text, size: 11.5, color: .secondaryLabelColor)
+        label.lineBreakMode = .byTruncatingTail
+        label.toolTip = text
+        UI.flexible(label)
+        let row = UI.row([icon, label], spacing: 6)
         row.edgeInsets = NSEdgeInsets(top: 4, left: UI.rowSide, bottom: 2, right: UI.rowSide)
         return row
     }()
@@ -78,7 +86,18 @@ final class PopoverContentView: NSStackView {
         return CardView(column)
     }()
     private let otherRows = UI.column([], spacing: 0)
-    private lazy var otherCard = CardView(otherRows)
+    private lazy var otherCard: CardView = {
+        let title = UI.sectionTitle("Other Tools")
+        UI.flexible(title)
+        let header = UI.row([UI.gap(width: UI.tileSize), title])
+        header.edgeInsets = UI.insets()
+        let column = UI.column([header, otherRows], spacing: 2)
+        for view in [header, otherRows] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        }
+        return CardView(column)
+    }()
     private let emptyLabel = UI.label("No local AI sessions detected yet", color: .secondaryLabelColor)
     private let cpuValue = UI.label("—", weight: .semibold)
     private let ramValue = UI.label("—", weight: .semibold)
@@ -99,6 +118,7 @@ final class PopoverContentView: NSStackView {
         return CardView(sessionRows)
     }()
     private var sessionsOpen = false
+    var sessionsAreOpen: Bool { sessionsOpen }
 
     override var isFlipped: Bool { true }
 
@@ -156,15 +176,20 @@ final class PopoverContentView: NSStackView {
         return header
     }
 
-    private let alertText = UI.label("Captive portal detected", weight: .medium)
+    private let alertText = UI.label("", weight: .medium)
+    private var alertOpensSettings = false
+    private lazy var alertButton = ClosureButton(title: "Sign in Now") { [weak self] in
+        guard let self = self else { return }
+        if self.alertOpensSettings { self.onSettings?() } else { self.onSignIn?() }
+    }
 
     private func makeAlertCard() -> CardView {
         let icon = NSImageView(image: UI.symbol("exclamationmark.triangle", description: "Warning") ?? NSImage())
         icon.contentTintColor = UI.warn
         UI.fix(icon, width: UI.tileSize)
+        alertText.lineBreakMode = .byTruncatingTail
         UI.flexible(alertText)
-        let button = ClosureButton(title: "Sign in Now") { [weak self] in self?.onSignIn?() }
-        let row = UI.row([icon, alertText, button])
+        let row = UI.row([icon, alertText, alertButton])
         row.edgeInsets = UI.insets()
         return CardView(row)
     }
@@ -205,12 +230,25 @@ final class PopoverContentView: NSStackView {
         case .connected:  symbol = "wifi"
         case .idle:       symbol = "wifi"
         case .working:    symbol = "arrow.triangle.2.circlepath"
-        case .needsLogin: symbol = "wifi.exclamationmark"
+        case .needsLogin, .needsSettings: symbol = "wifi.exclamationmark"
         }
         statusIcon.image = UI.symbol(symbol, size: 15, weight: .medium)
+        // The header names what happened; the card says what to do, with one button.
+        let alert: (text: String, opensSettings: Bool)?
+        switch state {
+        case .needsLogin:    alert = ("This Wi-Fi needs a sign-in", false)
+        case .needsSettings: alert = ("Check your sign-in details", true)
         // With auto-login off nothing else can sign in, so the button stays while the Mac is offline.
-        let wantsAlert = state == .needsLogin || (state == .idle && !autoLogin)
-        alertText.stringValue = autoLogin ? "Captive portal detected" : "Auto-login is off"
+        case .idle where !autoLogin: alert = ("Auto-login is off", false)
+        default: alert = nil
+        }
+        let wantsAlert = alert != nil
+        if let alert = alert {
+            alertText.stringValue = alert.text
+            alertText.toolTip = alert.text
+            alertOpensSettings = alert.opensSettings
+            alertButton.title = alert.opensSettings ? "Open Settings" : "Sign in Now"
+        }
         if alertCard.isHidden == wantsAlert {
             alertCard.isHidden = !wantsAlert
             onHeightChange?()
@@ -280,7 +318,7 @@ final class PopoverContentView: NSStackView {
         UI.flexible(name)
         let reset = UI.label(quota.reset, size: 10.5, color: .secondaryLabelColor)
         reset.alignment = .right
-        UI.fix(reset, width: 66)
+        UI.fix(reset, width: 78)
         let column = QuotaColumn()
         column.set(quota.cell, spoken: QuotaColumn.spoken(owner: "Antigravity", window: quota.fullName, cell: quota.cell, showLeft: showLeft))
         let row = UI.row([UI.gap(width: UI.tileSize), name, reset, column, UI.gap(width: UI.actionWidth)])

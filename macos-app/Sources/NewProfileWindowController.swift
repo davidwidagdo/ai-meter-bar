@@ -27,6 +27,7 @@ final class NewProfileWindowController: NSWindowController, NSTextFieldDelegate,
     private var profile: ClaudeProfile?
     private var launcherURL: URL?
     private var name = ""
+    private var showingResult = false
 
     convenience init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 400), styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -44,7 +45,14 @@ final class NewProfileWindowController: NSWindowController, NSTextFieldDelegate,
     }
 
     func present() {
-        existing = ClaudeProfiles.listed().map(\.name)
+        // An open form or a creation in progress only comes forward; a finished one starts over.
+        guard window?.isVisible != true || showingResult else {
+            NSApp.activate(ignoringOtherApps: true)
+            window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let profiles = ClaudeProfiles.listed()
+        existing = profiles.map(\.name) + profiles.compactMap { Settings.shared.alias(forFolder: $0.folder) }
         tintIndex = 0
         nameField.stringValue = ""
         launcherSwitch.state = .on
@@ -58,6 +66,10 @@ final class NewProfileWindowController: NSWindowController, NSTextFieldDelegate,
     // MARK: - Steps
 
     private func show(_ step: Step) {
+        switch step {
+        case .form, .working: showingResult = false
+        default: showingResult = true
+        }
         guard let root = window?.contentView else { return }
         root.subviews.forEach { $0.removeFromSuperview() }
         let body: NSView

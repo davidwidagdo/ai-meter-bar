@@ -21,7 +21,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var displayAsleep = false
 
     private var isBusy = false
-    private var throttle = LoginThrottle()
+    private var pendingManual = false
+    private var runningManual = false
+    private var sawCaptivity = false
+    private var lastRouter: String?
+    // One pause per router, so moving between networks never clears the pause on the first one.
+    private var throttles: [String: LoginThrottle] = [:]
+    private var throttle: LoginThrottle {
+        get { throttles[lastRouter ?? ""] ?? LoginThrottle() }
+        set { throttles[lastRouter ?? ""] = newValue }
+    }
 
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.davidwidagdo.aimeterbar.path")
@@ -171,12 +180,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let signature = client.networkSignature(for: path)
         guard signature != lastSignature else { return }
         lastSignature = signature
+        sawCaptivity = false
+        if let router = signature.router { lastRouter = router }
         triggerCheck(reason: "network changed")
     }
 
     // Dark wakes run the app for seconds with no network, and no didWake ever marks them.
     @objc private func systemWillSleep() {
         systemAsleep = true
+        pendingManual = false
         Log.write("System going to sleep.")
         displayAsleep = true
     }
@@ -277,8 +289,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func runCycle(manual: Bool) {
-        guard !isBusy else { return }
+        guard !isBusy else {
+            // A click waits out an automatic check; a repeat click during a manual one is dropped.
+            if manual, !runningManual { pendingManual = true }
+            return
+        }
         isBusy = true
+        runningManual = manual
         if manual { throttle.reset() }
         client.checkConnectivity { [weak self] state in
             DispatchQueue.main.async {
@@ -290,6 +307,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.client.inspectCaptivePage { [weak self] ours, page in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
+                        // A failed probe alone is no portal; a page that answered in its place is.
+                        if page != nil { self.sawCaptivity = true }
                         if ours, page?.isLoggedIn == true {
                             self.sessionIsLive()
                             return
@@ -304,7 +323,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             return
                         }
                         guard self.throttle.allowsAttempt(now: Date()) else {
-                            self.statusController.setStatus(.needsLogin, "Login paused after a rejection")
+                            // A wrong password stays on screen; waiting alone cannot fix it.
+                            if self.statusController.portalState != .needsSettings {
+                                self.statusController.setStatus(.needsLogin, "Login paused after a rejection")
+                            }
                             self.finishCycle()
                             return
                         }
@@ -327,7 +349,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusController.setStatus(.connected, "Connected")
         quickRetriesLeft = 0
         throttle.reset()
-        dismissCaptivePopup()
+        // The probe can pass over another link while Wi-Fi still waits on its portal popup.
+        if sawCaptivity { dismissCaptivePopup() }
         finishCycle()
     }
 
@@ -342,9 +365,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .sent, .failed:
                     self.confirmLogin(wallStart: wallStart, uptimeStart: uptimeStart, sendFailed: submit == .failed)
                 case .refused:
-                    self.loginBlocked("Login refused — check Login URL")
+                    self.loginBlocked("Login refused")
                 case .noPassword:
-                    self.loginBlocked("No password — check Settings")
+                    self.loginBlocked("No password saved")
                 }
             }
         }
@@ -352,7 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func loginBlocked(_ status: String) {
         throttle.recordRejected(now: Date())
-        statusController.setStatus(.needsLogin, status)
+        statusController.setStatus(.needsSettings, status)
         finishCycle()
     }
 
@@ -382,11 +405,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             finishCycle()
         case .rejected:
             throttle.recordRejected(now: Date())
-            statusController.setStatus(.needsLogin, "Login failed — check Settings")
+            statusController.setStatus(.needsSettings, "Login failed")
             Log.write("Login FAILED — portal still asks for credentials.")
             finishCycle()
         case .unconfirmed:
-            statusController.setStatus(.needsLogin, "Login unconfirmed — rechecking")
+            statusController.setStatus(.needsLogin, "Login unconfirmed, rechecking")
             Log.write("Login unconfirmed (slept: \(slept)) — rechecking.")
             // Rechecks continue, but only a nap excuses another POST: portals may not show a readable form.
             if !slept { throttle.recordRejected(now: Date()) }
@@ -398,6 +421,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func finishCycle() {
         isBusy = false
+        runningManual = false
+        guard pendingManual, !systemAsleep else { return }
+        pendingManual = false
+        DispatchQueue.main.async { [weak self] in self?.runCycle(manual: true) }
     }
 
     private func scheduleQuickRetry() {
@@ -410,6 +437,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Only called once the session is confirmed, when the macOS portal popup is stale.
     private func dismissCaptivePopup() {
+        sawCaptivity = false
         let popups = NSRunningApplication.runningApplications(withBundleIdentifier: Self.captivePopupBundleID)
         guard !popups.isEmpty else { return }
         popups.forEach { if !$0.terminate() { $0.forceTerminate() } }
@@ -443,7 +471,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if newProfileWC == nil { newProfileWC = NewProfileWindowController() }
         newProfileWC?.onProfilesChanged = { [weak self] in self?.profilesChanged() }
         newProfileWC?.onOpenExisting = { [weak self] name in
-            guard let profile = ClaudeProfiles.find(name: name, in: ClaudeProfiles.listed()) else { return }
+            let profiles = ClaudeProfiles.listed()
+            let renamed = profiles.first { Settings.shared.alias(forFolder: $0.folder).map { ProfileNames.sameName($0, name) } ?? false }
+            guard let profile = renamed ?? ClaudeProfiles.find(name: name, in: profiles) else { return }
             self?.popoverOpenProfile(folder: profile.folder)
         }
         newProfileWC?.present()
@@ -526,12 +556,12 @@ extension AppDelegate: StatusPopoverDelegate {
         settingsWC?.onNewProfile = { [weak self] in self?.openNewProfile() }
         settingsWC?.onProfilesChanged = { [weak self] in self?.usageCoordinator.refresh() }
         settingsWC?.onOpenUsageHistory = { [weak self] in self?.openUsageHistory() }
-        settingsWC?.runDiagnostics = { [weak self] completion in
+        settingsWC?.runDiagnostics = { [weak self] loginURL, marker, completion in
             guard !AppMode.isDemo else {
                 completion(["Demo mode: the portal is not checked."])
                 return
             }
-            self?.client.diagnose(completion: completion)
+            self?.client.diagnose(loginURL: loginURL, marker: marker, completion: completion)
         }
         settingsWC?.onSave = { [weak self] in
             guard let self = self else { return }
@@ -540,7 +570,7 @@ extension AppDelegate: StatusPopoverDelegate {
                 return
             }
             Log.write("Settings updated.")
-            self.throttle.reset()
+            self.throttles.removeAll()
             self.startMonitoring()
             self.restartMeters()
             self.syncUsageTimer()

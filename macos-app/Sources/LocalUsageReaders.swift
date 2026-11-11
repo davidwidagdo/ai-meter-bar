@@ -42,8 +42,11 @@ enum ClaudeUsageParser {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let samples = root["samples"] as? [[String: Any]] else { return .unreadable }
         guard let last = samples.last else { return .noData }
-        // Claude also writes empty samples, so the newest one with a value counts.
-        let sample = samples.last { usage(in: $0).fiveHour != nil || usage(in: $0).week != nil } ?? last
+        // Claude also writes empty samples: the newest one with a value on the same account counts.
+        let account = last["org"] as? String
+        let sample = samples.last {
+            $0["org"] as? String == account && (usage(in: $0).fiveHour != nil || usage(in: $0).week != nil)
+        } ?? last
         guard let millis = (sample["t"] as? NSNumber)?.doubleValue else { return .unreadable }
         let values = usage(in: sample)
         return .reading(ClaudeUsageReading(date: Date(timeIntervalSince1970: millis / 1000),
@@ -84,9 +87,19 @@ enum CodexUsageParser {
         for line in SafeFile.jsonLines(tail, dropFirstLine: dropFirstLine).reversed() {
             guard let limits = (line["payload"] as? [String: Any])?["rate_limits"] as? [String: Any] else { continue }
             let primary = window(limits["primary"]), secondary = window(limits["secondary"])
-            if primary != nil || secondary != nil { return CodexReading(primary: primary, secondary: secondary) }
+            guard primary != nil || secondary != nil else { continue }
+            // Later lines move the file date, so the event's own time dates the reading.
+            return CodexReading(primary: primary, secondary: secondary, date: (line["timestamp"] as? String).flatMap(eventDate))
         }
         return nil
+    }
+
+    private static func eventDate(_ text: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: text) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: text)
     }
 
     private static func window(_ value: Any?) -> CodexWindow? {
@@ -106,7 +119,7 @@ enum CodexProvider {
         for file in SessionFiles.newest(under: root, limit: filesToTry) {
             guard let tail = SafeFile.tail(file),
                   var reading = CodexUsageParser.lastReading(tail: tail.data, dropFirstLine: tail.truncated) else { continue }
-            reading.date = SafeFile.modificationDate(file)
+            reading.date = reading.date ?? SafeFile.modificationDate(file)
             return reading
         }
         return nil
@@ -125,6 +138,11 @@ enum AntigravityParser {
 
 enum CodexAppServerParser {
     static let requestID = 2
+
+    // An error reply ends the wait at once instead of after the timeout.
+    static func isReply(_ line: Data) -> Bool {
+        ((try? JSONSerialization.jsonObject(with: line)) as? [String: Any])?["id"] as? NSNumber == NSNumber(value: requestID)
+    }
 
     static func reading(fromLine line: Data, now: Date) -> CodexReading? {
         guard let root = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],

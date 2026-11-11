@@ -34,17 +34,20 @@ struct CaptivePage {
     let status: Int?
     let gateway: String?
     let marker: String
+    // Set only with a marker, when the gateway's own page led here, so the POST goes the same way.
+    let route: String?
     // Parsed where the page is fetched, so a hostile page cannot stall the main thread.
     let form: LoginForm?
     let isLoggedIn: Bool
 
-    init(url: URL?, html: String, hops: Int = 0, status: Int? = nil, gateway: String? = nil, marker: String = "") {
+    init(url: URL?, html: String, hops: Int = 0, status: Int? = nil, gateway: String? = nil, marker: String = "", route: String? = nil) {
         self.url = url
         self.html = html
         self.hops = hops
         self.status = status
         self.gateway = gateway
         self.marker = marker
+        self.route = route
         form = LoginFormParser.parse(html: html)
         isLoggedIn = LoginFormParser.isSessionPage(html: html)
     }
@@ -211,8 +214,11 @@ enum LoginFormParser {
     }
 
     private static func attribute(_ name: String, in tag: String) -> String? {
-        let raw = firstCapture("(?i)\\b\(name)\\s*=\\s*\"([^\"]*)\"", tag)
-            ?? firstCapture("(?i)\\b\(name)\\s*=\\s*'([^']*)'", tag)
+        // Not after a hyphen, so data-type="x" is never read as type.
+        let key = "(?i)(?<![\\w-])\(name)\\s*=\\s*"
+        let raw = firstCapture(key + "\"([^\"]*)\"", tag)
+            ?? firstCapture(key + "'([^']*)'", tag)
+            ?? firstCapture(key + "([^\\s\"'=<>`]+)", tag)
         return raw.map(decodeEntities)
     }
 

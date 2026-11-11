@@ -13,9 +13,13 @@ enum ClaudeInstances {
     static let bundleID = "com.anthropic.claudefordesktop"
 
     static func running() -> [ClaudeInstance] {
-        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).map { app in
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+        guard !apps.isEmpty else { return [] }
+        let folders = ClaudeProfiles.scan().map(\.folder)
+        return apps.compactMap { app in
             let directory = ProcessArgs.userDataDir(ProcessArgs.read(pid: app.processIdentifier))
-            let folder = directory.map { URL(fileURLWithPath: $0).lastPathComponent } ?? ProfileNames.defaultFolder
+            guard let folder = ClaudeProfiles.runningFolder(userDataDir: directory, root: ClaudeProfiles.supportRoot,
+                                                            folders: folders) else { return nil }
             return ClaudeInstance(pid: app.processIdentifier, folder: folder)
         }
     }

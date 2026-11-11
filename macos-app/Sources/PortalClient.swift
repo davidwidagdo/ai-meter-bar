@@ -105,7 +105,8 @@ final class PortalClient {
 
     // Gate before any POST: the page must hold a login form, or the marker when set.
     func inspectCaptivePage(completion: @escaping (_ isOurPortal: Bool, _ page: CaptivePage?) -> Void) {
-        fetchCaptivePage { [weak self] page in
+        let marker = Settings.shared.portalMarker.trimmingCharacters(in: .whitespaces)
+        fetchCaptivePage(marker: marker, portalHost: portalHost) { [weak self] page in
             guard let page = page, let self = self else { completion(false, page); return }
             completion(Self.isOurPortal(page: page, ownAddresses: self.ownAddresses), page)
         }
@@ -176,58 +177,66 @@ final class PortalClient {
         }
     }
 
-    // Read-only: never posts and never touches the Keychain.
-    func diagnose(completion: @escaping ([String]) -> Void) {
+    // Read-only: never posts and never touches the Keychain. Takes the values typed in Settings.
+    func diagnose(loginURL: String, marker: String, completion: @escaping ([String]) -> Void) {
+        let marker = marker.trimmingCharacters(in: .whitespaces)
+        let host = URL(string: loginURL.trimmingCharacters(in: .whitespaces))?.host
         checkConnectivity { [weak self] state in
             guard let self = self else { return }
-            self.fetchCaptivePage { page in
-                let kind = PostGuard.hostKind(page?.url, portalHost: self.portalHost, gateway: self.wifiGateway)
+            self.fetchCaptivePage(marker: marker, portalHost: host) { page in
+                let kind = PostGuard.hostKind(page?.url, portalHost: host, gateway: self.wifiGateway)
                 completion(PortalDiagnostics.report(connected: state == .connected, page: page,
-                                                    marker: Settings.shared.portalMarker, hostKind: kind,
+                                                    marker: marker, hostKind: kind,
                                                     ownAddresses: self.ownAddresses))
             }
         }
     }
 
     // The marker gates the gateway page: a router's own admin login must never get the password.
-    private func fetchCaptivePage(completion: @escaping (CaptivePage?) -> Void) {
-        let marker = Settings.shared.portalMarker.trimmingCharacters(in: .whitespaces)
+    private func fetchCaptivePage(marker: String, portalHost: String?, completion: @escaping (CaptivePage?) -> Void) {
         guard !marker.isEmpty, let gateway = wifiGateway, let start = URL(string: "http://\(gateway)/login") else {
-            fetchPage(probeURL, hops: 0, marker: marker, completion: completion)
+            fetchPage(probeURL, hops: 0, marker: marker, portalHost: portalHost, via: nil, completion: completion)
             return
         }
-        fetchPage(start, hops: 0, marker: marker) { [weak self] page in
+        fetchPage(start, hops: 0, marker: marker, portalHost: portalHost, via: gateway) { [weak self] page in
             if let page = page, let self = self, Self.isOurPortal(page: page, ownAddresses: self.ownAddresses) {
                 completion(page)
             } else if let self = self {
-                // The portal may not live on the gateway, so its own page must not hide the probe.
-                self.fetchPage(self.probeURL, hops: 0, marker: marker) { completion($0 ?? page) }
+                // The portal may not live on the gateway, so its name is tried as it is first.
+                self.fetchPage(self.probeURL, hops: 0, marker: marker, portalHost: portalHost, via: nil) { [weak self] direct in
+                    guard direct == nil, let self = self else { return completion(direct ?? page) }
+                    // A VPN can hide the name, so the chain runs once more by way of the gateway.
+                    self.fetchPage(self.probeURL, hops: 0, marker: marker, portalHost: portalHost, via: gateway) { completion($0 ?? page) }
+                }
             } else {
                 completion(page)
             }
         }
     }
 
-    // One marker and gateway for a whole cycle, so the gate and the route cannot disagree.
-    private func portalRequest(_ url: URL, marker: String, gateway: String?) -> URLRequest {
-        let host = portalHost
-        // Only a marker proves this gateway is the portal; without one the name must not reach it.
-        let routed = PortalRoute.url(url, portalHost: host, gateway: marker.isEmpty ? nil : gateway)
+    private static func portalRequest(_ url: URL, portalHost: String?, via gateway: String?) -> URLRequest {
+        let routed = PortalRoute.url(url, portalHost: portalHost, gateway: gateway)
         var request = URLRequest(url: routed)
-        if routed != url { request.setValue(host, forHTTPHeaderField: "Host") }
+        if routed != url, let host = url.host {
+            request.setValue(url.port.map { "\(host):\($0)" } ?? host, forHTTPHeaderField: "Host")
+        }
         return request
     }
 
-    private func fetchPage(_ url: URL, hops: Int, marker: String, completion: @escaping (CaptivePage?) -> Void) {
+    private func fetchPage(_ url: URL, hops: Int, marker: String, portalHost: String?, via route: String?,
+                           completion: @escaping (CaptivePage?) -> Void) {
         let gateway = wifiGateway
-        var request = portalRequest(url, marker: marker, gateway: gateway)
+        var request = Self.portalRequest(url, portalHost: portalHost, via: route)
         request.timeoutInterval = 6
         let task = session.dataTask(with: request) { [weak self] data, response, _ in
-            guard let data = data, data.count <= CaptivePage.maxBytes, let html = String(data: data, encoding: .utf8) else {
+            // Older portals send Latin-1; every byte sequence decodes as Latin-1.
+            guard let data = data, data.count <= CaptivePage.maxBytes,
+                  let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
                 completion(nil)
                 return
             }
-            let page = CaptivePage(url: url, html: html, hops: hops, status: (response as? HTTPURLResponse)?.statusCode, gateway: gateway, marker: marker)
+            let page = CaptivePage(url: url, html: html, hops: hops, status: (response as? HTTPURLResponse)?.statusCode,
+                                   gateway: gateway, marker: marker, route: route)
             let location = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location")
                 .flatMap { URL(string: $0, relativeTo: url)?.absoluteURL }
             guard let self = self, hops < Self.maxRedirectHops,
@@ -236,7 +245,7 @@ final class PortalClient {
                 completion(page)
                 return
             }
-            self.fetchPage(next, hops: hops + 1, marker: marker, completion: completion)
+            self.fetchPage(next, hops: hops + 1, marker: marker, portalHost: portalHost, via: route, completion: completion)
         }
         task.resume()
     }
@@ -258,7 +267,7 @@ final class PortalClient {
     }
 
     private func postForm(url: URL, fields: [(String, String)], source: String, page: CaptivePage, completion: @escaping (LoginSubmit) -> Void) {
-        var request = portalRequest(url, marker: page.marker, gateway: page.gateway)
+        var request = Self.portalRequest(url, portalHost: portalHost, via: page.route)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = Self.formEncode(fields).data(using: .utf8)

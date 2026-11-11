@@ -60,4 +60,17 @@ func testUsageStore() {
     T.expect(store5.history().contains { $0.day == "2026-08-01" && $0.rx == 1000 },
              "resetToday preserves prior day after rollover")
     T.eq(store5.today.rx, UInt64(0), "resetToday zeroes the current day")
+
+    // Missing days leave no row, so totals follow the calendar.
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .current
+    let today = calendar.date(from: DateComponents(year: 2026, month: 11, day: 11, hour: 12))!
+    func row(_ daysAgo: Int, _ rx: UInt64) -> DayUsage {
+        DayUsage(day: UsageStore.dayString(calendar.date(byAdding: .day, value: -daysAgo, to: today)!), rx: rx, tx: 1, peakDown: 0, peakUp: 0)
+    }
+    let rows = [row(0, 1), row(6, 10), row(7, 100), row(12, 1000)]
+    T.eq(UsageStore.totals(rows, days: 7, today: today, calendar: calendar).rx, UInt64(11), "7 days counts today back to 6 days ago")
+    T.eq(UsageStore.totals(rows, days: 7, today: today, calendar: calendar).tx, UInt64(2), "7 days upload")
+    T.eq(UsageStore.totals(rows, days: 30, today: today, calendar: calendar).rx, UInt64(1111), "30 days counts all four")
+    T.eq(UsageStore.totals([], days: 7, today: today, calendar: calendar).rx, UInt64(0), "no rows")
 }
