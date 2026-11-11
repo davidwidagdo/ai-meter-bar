@@ -164,6 +164,7 @@ final class PopoverContentView: NSStackView {
     private let vpnRows = UI.column([], spacing: 0)
     private lazy var vpnCard = Self.sectionCard("VPN", rows: vpnRows)
     private let otherRows = UI.column([], spacing: 0)
+    private var otherRowsShown = ""
     private lazy var otherCard = Self.sectionCard("Other Tools", rows: otherRows)
     private let emptyLabel = UI.label("No local AI sessions detected yet", color: .secondaryLabelColor)
     private let cpuValue = UI.label("—", weight: .semibold)
@@ -401,17 +402,23 @@ final class PopoverContentView: NSStackView {
         let visible = snapshot.profiles.filter { !settings.hiddenProfiles.contains($0.folder) }
         pausedHint.isHidden = !AISnapshot.hasPausedProfile(visible, now: now)
 
-        otherRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        if settings.showCodex, let codex = snapshot.codex {
-            addOtherRow(makeCodexRow(codex, showLeft: showLeft, now: now))
-        }
-        if settings.showAntigravity, let antigravity = snapshot.antigravity {
-            let model = AntigravityRowModel.make(antigravity, showLeft: showLeft, now: now)
-            addOtherRow(makeToolRow(.antigravity, name: "Antigravity", detail: model.detail))
-            for quota in model.quotas { addOtherRow(makeQuotaRow(quota, showLeft: showLeft)) }
-        }
-        for status in snapshot.tools where status.isRecent(now: now) && !settings.hiddenTools.contains(status.tool.rawValue) {
-            addOtherRow(makeToolRow(status.tool.mark, name: status.tool.displayName, detail: LastActive.line(status.lastActive, now: now)))
+        let codex = (settings.showCodex ? snapshot.codex : nil).map { CodexRowModel.make($0, showLeft: showLeft, now: now) }
+        let antigravity = (settings.showAntigravity ? snapshot.antigravity : nil).map { AntigravityRowModel.make($0, showLeft: showLeft, now: now) }
+        let tools = snapshot.tools.filter { $0.isRecent(now: now) && !settings.hiddenTools.contains($0.tool.rawValue) }
+            .map { (tool: $0.tool, detail: LastActive.line($0.lastActive, now: now)) }
+        // Rebuilt only when what they show changed, so an unchanged refresh costs nothing.
+        let shown = "\(showLeft)|\(String(describing: codex))|\(String(describing: antigravity))|\(tools.map { "\($0.tool.rawValue):\($0.detail)" })"
+        if shown != otherRowsShown {
+            otherRowsShown = shown
+            otherRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            if let codex = codex { addOtherRow(makeCodexRow(codex, showLeft: showLeft)) }
+            if let antigravity = antigravity {
+                addOtherRow(makeToolRow(.antigravity, name: "Antigravity", detail: antigravity.detail))
+                for quota in antigravity.quotas { addOtherRow(makeQuotaRow(quota, showLeft: showLeft)) }
+            }
+            for entry in tools {
+                addOtherRow(makeToolRow(entry.tool.mark, name: entry.tool.displayName, detail: entry.detail))
+            }
         }
         otherCard.isHidden = otherRows.arrangedSubviews.isEmpty
         emptyLabel.isHidden = !(profileRows.arrangedSubviews.isEmpty && otherRows.arrangedSubviews.isEmpty)
@@ -451,8 +458,7 @@ final class PopoverContentView: NSStackView {
         row.widthAnchor.constraint(equalTo: otherRows.widthAnchor).isActive = true
     }
 
-    private func makeCodexRow(_ reading: CodexReading, showLeft: Bool, now: Date) -> NSView {
-        let model = CodexRowModel.make(reading, showLeft: showLeft, now: now)
+    private func makeCodexRow(_ model: CodexRowModel, showLeft: Bool) -> NSView {
         let primary = QuotaColumn(), secondary = QuotaColumn()
         primary.set(model.fiveHour, spoken: QuotaColumn.spoken(owner: "Codex", window: "5 hour", cell: model.fiveHour, showLeft: showLeft))
         secondary.set(model.week, spoken: QuotaColumn.spoken(owner: "Codex", window: "weekly", cell: model.week, showLeft: showLeft))
