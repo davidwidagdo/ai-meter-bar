@@ -1,7 +1,8 @@
 import Cocoa
 
 enum PortalState {
-    case connected, idle, working, needsLogin
+    // needsSettings: a retry cannot help until the password or Login URL changes.
+    case connected, idle, working, needsLogin, needsSettings
 }
 
 protocol StatusPopoverDelegate: AnyObject {
@@ -14,20 +15,23 @@ protocol StatusPopoverDelegate: AnyObject {
     func popoverNewProfile()
     func popoverOpenProfile(folder: String)
     func popoverShowSessions()
+    func popoverVPNAction(id: String)
 }
 
 // Owns the status item, its image and the popover; AppDelegate keeps the login cycle.
 final class StatusPopoverController: NSObject, NSPopoverDelegate {
     weak var delegate: StatusPopoverDelegate?
     private(set) var isOpen = false
+    // Read when shown, so a connection's age is current each time the panel opens.
+    var vpnRows: () -> [VPNPanelRow] = { [] }
 
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private let content = PopoverContentView()
-    private let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: PopoverContentView.width, height: 400))
+    private let scroll = OverlayScrollView(frame: NSRect(x: 0, y: 0, width: PopoverContentView.width, height: 400))
     private static let screenMargin: CGFloat = 40
 
-    private var portalState = PortalState.idle
+    private(set) var portalState = PortalState.idle
     private var statusText = "Checking…"
     private var lastLogin: Date?
     private var latestDown: Double = 0
@@ -73,6 +77,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         content.onSignIn = { [weak self] in self?.delegate?.popoverSignIn() }
         content.onOpenProfile = { [weak self] folder in self?.closeThen { $0.popoverOpenProfile(folder: folder) } }
         content.onShowSessions = { [weak self] in self?.delegate?.popoverShowSessions() }
+        content.onVPNAction = { [weak self] id in self?.delegate?.popoverVPNAction(id: id) }
         content.onHeightChange = { [weak self] in self?.resizePopover() }
         content.onActivityMonitor = { Self.openActivityMonitor() }
     }
@@ -102,6 +107,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         isOpen = true
         delegate?.popoverDidOpen()
         syncContent()
+        if content.sessionsAreOpen { delegate?.popoverShowSessions() }
         resizePopover()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
@@ -155,6 +161,12 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         if isOpen { content.setSnapshot(snapshot, settings: .shared, now: Date()) }
     }
 
+    func vpnChanged() {
+        guard isOpen else { return }
+        content.setVPN(vpnRows())
+        resizePopover()
+    }
+
     func setSessions(_ sessions: [RecentSession]) {
         content.setSessions(sessions, binary: Settings.shared.useBinaryUnits, now: Date())
     }
@@ -171,6 +183,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         syncStatus()
         syncSpeed()
         syncSystem()
+        content.setVPN(vpnRows())
         content.setSnapshot(snapshot, settings: .shared, now: Date())
     }
 
@@ -210,7 +223,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
     private func renderState() -> MenuBarRenderer.State {
         switch portalState {
         case .working:    return .working
-        case .needsLogin: return .needsLogin
+        case .needsLogin, .needsSettings: return .needsLogin
         default: break
         }
         guard Settings.shared.menuBarMode.showsAI else { return .normal }
@@ -229,7 +242,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
             columns.append(Column(rows: [
                 Column.Row(label: "", value: "↑ " + ByteFormatter.speed(latestUp, binary: settings.useBinaryUnits)),
                 Column.Row(label: "", value: "↓ " + ByteFormatter.speed(latestDown, binary: settings.useBinaryUnits)),
-            ], valueSample: "↑ 999.9 KB/s"))
+            ], valueSample: settings.useBinaryUnits ? "↑ 999.9 KiB/s" : "↑ 999.9 KB/s"))
         }
         if mode.showsSystem {
             columns.append(Column(rows: [
@@ -284,5 +297,13 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         }
         let codex = settings.showCodex ? snapshot.codex.map { CodexRowModel.make($0, showLeft: true, now: now) } : nil
         return ([status] + AITooltip.lines(profile: profile, codex: codex)).joined(separator: "\n")
+    }
+}
+
+// The panel has no room for a 15 pt legacy scroller; it would cover the action column.
+private final class OverlayScrollView: NSScrollView {
+    override var scrollerStyle: NSScroller.Style {
+        get { .overlay }
+        set { super.scrollerStyle = .overlay }
     }
 }

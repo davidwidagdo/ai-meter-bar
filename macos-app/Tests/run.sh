@@ -26,6 +26,8 @@ swiftc -o "$OUT" \
   Tests/ClaudeProfilesTests.swift \
   Sources/MeterClock.swift \
   Tests/MeterClockTests.swift \
+  Sources/VPN.swift \
+  Tests/VPNTests.swift \
   Tests/TestSupport.swift \
   Tests/ByteFormatterTests.swift \
   Tests/SpeedMathTests.swift \

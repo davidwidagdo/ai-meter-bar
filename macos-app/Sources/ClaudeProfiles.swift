@@ -18,12 +18,16 @@ enum ProfileNames {
         raw.trimmingCharacters(in: .whitespaces).range(of: pattern, options: .regularExpression) != nil
     }
 
+    // Case, spaces and hyphens do not make two names different.
+    static func sameName(_ a: String, _ b: String) -> Bool {
+        slug(a).lowercased() == slug(b).lowercased()
+    }
+
     static func check(_ raw: String, existing: [String]) -> ProfileNameCheck {
         let name = raw.trimmingCharacters(in: .whitespaces)
         if name.isEmpty { return .empty }
         guard isValid(name) else { return .invalid }
-        let taken = ([defaultName] + existing).map { $0.lowercased() }
-        return taken.contains(slug(name).lowercased()) ? .taken : .ok
+        return ([defaultName] + existing).contains { sameName($0, name) } ? .taken : .ok
     }
 
     static func folderName(_ raw: String) -> String {
@@ -103,10 +107,20 @@ enum ClaudeProfiles {
         AppMode.isDemo ? DemoData.profiles : scan()
     }
 
+    // A same-named folder elsewhere is no profile; another case maps to the real folder.
+    static func runningFolder(userDataDir: String?, root: URL, folders: [String]) -> String? {
+        guard let path = userDataDir else { return ProfileNames.defaultFolder }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        guard url.deletingLastPathComponent().path.caseInsensitiveCompare(root.standardizedFileURL.path) == .orderedSame else {
+            return nil
+        }
+        return folders.first { $0.caseInsensitiveCompare(url.lastPathComponent) == .orderedSame } ?? url.lastPathComponent
+    }
+
     static func find(name: String, in profiles: [ClaudeProfile]) -> ClaudeProfile? {
         let folder = ProfileNames.folderName(name)
         return profiles.first {
-            $0.name.caseInsensitiveCompare(name) == .orderedSame || $0.folder.caseInsensitiveCompare(folder) == .orderedSame
+            ProfileNames.sameName($0.name, name) || $0.folder.caseInsensitiveCompare(folder) == .orderedSame
         }
     }
 

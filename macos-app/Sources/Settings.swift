@@ -19,9 +19,10 @@ enum MenuBarMode: String, CaseIterable {
 }
 
 enum ProfileTint {
+    static let graphite = "#5A5F6A"
     static let all: [(name: String, hex: String)] = [
         ("Blue", "#0062CC"), ("Purple", "#6B3FD4"), ("Teal", "#0B7A75"),
-        ("Orange", "#B3500A"), ("Pink", "#C2185B"), ("Graphite", "#5A5F6A"),
+        ("Orange", "#B3500A"), ("Pink", "#C2185B"), ("Graphite", graphite),
     ]
 
     static func fallback(forFolder folder: String) -> String {
@@ -58,6 +59,7 @@ final class Settings {
         static let profileTints = "claudeProfileTints"
         static let hiddenProfiles = "hiddenClaudeProfiles"
         static let hiddenTools = "hiddenAITools"
+        static let hiddenVPNs = "hiddenVPNs"
     }
 
     private init() {
@@ -132,6 +134,12 @@ final class Settings {
     var showAntigravity: Bool {
         get { defaults.object(forKey: Key.showAntigravity) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.showAntigravity) }
+    }
+
+    // macOS service IDs only; names stay with the VPN app.
+    var hiddenVPNs: Set<String> {
+        get { Set(defaults.stringArray(forKey: Key.hiddenVPNs) ?? []) }
+        set { defaults.set(newValue.sorted(), forKey: Key.hiddenVPNs) }
     }
 
     var hiddenProfiles: Set<String> {

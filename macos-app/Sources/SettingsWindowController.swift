@@ -23,6 +23,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let codexSwitch = NSSwitch()
     private let antigravitySwitch = NSSwitch()
     private var toolSwitches: [AITool: NSSwitch] = [:]
+    private let toolRows = UI.column([], spacing: 4)
+    private let vpnRows = UI.column([], spacing: 4)
+    private var vpnSwitches: [String: NSSwitch] = [:]
 
     // Portal tab
     private let tabView = NSTabView()
@@ -42,8 +45,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let advancedToggle = NSButton(checkboxWithTitle: "Show advanced portal options (rarely needed)", target: nil, action: nil)
     private var advancedBox = NSView()
     private let diagnoseResult = UI.wrappingLabel("", width: 520)
-    private var baseContentHeight: CGFloat = 0
-    private var isMeasuringTabs = false
 
     // General tab
     private let modePopup = NSPopUpButton()
@@ -60,7 +61,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     var onNewProfile: (() -> Void)?
     var onProfilesChanged: (() -> Void)?
     var onOpenUsageHistory: (() -> Void)?
-    var runDiagnostics: ((@escaping ([String]) -> Void) -> Void)?
+    var vpnServices: () -> [VPNService] = { [] }
+    var runDiagnostics: ((_ loginURL: String, _ marker: String, @escaping ([String]) -> Void) -> Void)?
 
     private let intervalOptions = Settings.intervalOptions
     private let modes = MenuBarMode.allCases
@@ -114,32 +116,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         ])
     }
 
-    // NSTabView lays out only the selected tab, so measure every tab or taller ones clip.
-    private func sizeWindowToTallestTab() {
-        guard let content = window?.contentView else { return }
-        let selected = tabView.selectedTabViewItem
-        var tallest: CGFloat = 0
-        // Selecting the Portal tab just to measure it must not read the Keychain.
-        isMeasuringTabs = true
-        for item in tabView.tabViewItems {
-            tabView.selectTabViewItem(item)
-            content.layoutSubtreeIfNeeded()
-            tallest = max(tallest, content.fittingSize.height)
-        }
-        if let selected = selected { tabView.selectTabViewItem(selected) }
-        isMeasuringTabs = false
-        guard tallest > 0 else { return }
-        baseContentHeight = tallest
-        window?.setContentSize(NSSize(width: content.frame.width, height: tallest))
-    }
-
-    // The advanced section can outgrow the tallest-tab floor; grow instead of clipping it.
-    private func fitWindowToCurrentContent() {
-        guard let content = window?.contentView else { return }
+    // NSTabView lays out only the selected tab, so the window fits it, keeping its top edge.
+    private func fitWindowToCurrentContent(animate: Bool = true) {
+        guard let window = window, let content = window.contentView else { return }
         content.layoutSubtreeIfNeeded()
-        let height = max(baseContentHeight, content.fittingSize.height)
-        guard abs(height - content.frame.height) > 0.5 else { return }
-        window?.setContentSize(NSSize(width: content.frame.width, height: height))
+        let height = content.fittingSize.height
+        guard height > 0, abs(height - content.frame.height) > 0.5 else { return }
+        var frame = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: content.frame.width, height: height))
+        frame.origin = NSPoint(x: window.frame.minX, y: window.frame.maxY - frame.height)
+        window.setFrame(frame, display: true, animate: animate && window.isVisible)
     }
 
     private func tab(_ title: String, identifier: String, view: NSView) -> NSTabViewItem {
@@ -184,30 +169,65 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let others = UI.label("Other Tools", size: 15, weight: .semibold)
         codexSwitch.setAccessibilityLabel("Show Codex in the bar")
         antigravitySwitch.setAccessibilityLabel("Show Antigravity in the bar")
-        var toolRows = [
-            toolRow(.openAI, "Codex", "Current account, read from local sessions", codexSwitch),
-            toolRow(.antigravity, "Antigravity", "Last active time only", antigravitySwitch),
-        ]
+        let tools = CardView(toolRows, padding: 8)
+        UI.fix(tools, width: 560)
+
+        let vpnTitle = UI.label("VPN", size: 15, weight: .semibold)
+        let vpns = CardView(vpnRows, padding: 8)
+        UI.fix(vpns, width: 560)
+        let vpnNote = UI.label("Hiding a VPN only removes its row; its profile stays in its own app.", size: 12, color: .secondaryLabelColor)
+
+        return UI.column([header, profiles, note, others, tools, vpnTitle, vpns, vpnNote], spacing: 12)
+    }
+
+    // One switch per VPN macOS lists, like the profile switches above.
+    private func rebuildVPNs() {
+        vpnRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        vpnSwitches.removeAll()
+        let services = vpnServices()
+        guard !services.isEmpty else {
+            let empty = UI.row([UI.label("No VPN in System Settings yet.", size: 12, color: .secondaryLabelColor)])
+            UI.fix(empty, width: 544, height: UI.rowHeight)
+            vpnRows.addArrangedSubview(empty)
+            return
+        }
+        let hidden = Settings.shared.hiddenVPNs
+        for service in services {
+            let toggle = NSSwitch()
+            toggle.setAccessibilityLabel("Show \(service.name) in the bar")
+            toggle.state = hidden.contains(service.id) ? .off : .on
+            vpnSwitches[service.id] = toggle
+            let tile = TileView(symbol: "lock.shield", hex: ProfileTint.graphite)
+            vpnRows.addArrangedSubview(toolRow(tile, service.name, VPNController.appName(for: service.provider), toggle))
+        }
+    }
+
+    // Rebuilt on every open, so a tool first used while the app runs gets its switch.
+    private func rebuildTools() {
+        toolRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        toolSwitches.removeAll()
+        toolRows.addArrangedSubview(toolRow(TileView(mark: .openAI), "Codex", "Current account, read from local sessions", codexSwitch))
+        toolRows.addArrangedSubview(toolRow(TileView(mark: .antigravity), "Antigravity", "Last active time only", antigravitySwitch))
+        let hidden = Settings.shared.hiddenTools
         for status in LocalTools.listed() {
             let toggle = NSSwitch()
             toggle.setAccessibilityLabel("Show \(status.tool.displayName) in the bar")
+            toggle.state = hidden.contains(status.tool.rawValue) ? .off : .on
             toolSwitches[status.tool] = toggle
-            toolRows.append(toolRow(status.tool.mark, status.tool.displayName, "Shown when used in the last 30 days", toggle))
+            toolRows.addArrangedSubview(toolRow(TileView(mark: status.tool.mark), status.tool.displayName, "Shown when used in the last 30 days", toggle))
         }
-        let tools = CardView(UI.column(toolRows, spacing: 4), padding: 8)
-        UI.fix(tools, width: 560)
-
-        return UI.column([header, profiles, note, others, tools], spacing: 12)
     }
 
-    private func toolRow(_ mark: ProviderMark, _ name: String, _ detail: String, _ toggle: NSSwitch) -> NSView {
+    private func toolRow(_ tile: NSView, _ name: String, _ detail: String, _ toggle: NSSwitch) -> NSView {
         let names = UI.column([UI.label(name, weight: .semibold), UI.label(detail, size: 11.5, color: .secondaryLabelColor)], spacing: 1)
-        let row = UI.row([TileView(mark: mark), names, UI.spacer(), toggle], spacing: 12)
-        UI.fix(row, width: 544)
+        let row = UI.row([tile, names, UI.spacer(), toggle], spacing: 12)
+        UI.fix(row, width: 544, height: UI.rowHeight)
         return row
     }
 
     private func rebuildProfiles() {
+        // Rename, Color and New Profile rebuild the list; unsaved switch changes stay.
+        let unsaved = profileSwitches.mapValues(\.state)
         profileRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
         profileSwitches.removeAll()
         let settings = Settings.shared
@@ -217,7 +237,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         var firstOnAccount: [String: String] = [:]
         for (profile, usage) in zip(profiles, usages) {
             let name = settings.alias(forFolder: profile.folder) ?? profile.name
-            var lines = [UI.label(name, weight: .semibold), UI.label(profile.folder, size: 11.5, color: .secondaryLabelColor, mono: true)]
+            var lines = [UI.label(name, weight: .semibold)]
             if case .reading(let reading) = usage, let account = reading.account {
                 if let owner = firstOnAccount[account] {
                     lines.append(UI.label("Same account as \(owner)", size: 11.5, color: .secondaryLabelColor))
@@ -226,10 +246,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
                 }
             }
             let names = UI.column(lines, spacing: 1)
+            names.toolTip = "Folder: \(profile.folder)"
             UI.flexible(names)
 
             let toggle = NSSwitch()
-            toggle.state = settings.hiddenProfiles.contains(profile.folder) ? .off : .on
+            toggle.state = unsaved[profile.folder] ?? (settings.hiddenProfiles.contains(profile.folder) ? .off : .on)
             toggle.setAccessibilityLabel("Show \(name) in the bar")
             profileSwitches[profile.folder] = toggle
 
@@ -250,9 +271,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             }
 
             let row = UI.row([TileView(letter: Monogram.letter(for: name), hex: settings.tint(forFolder: profile.folder)), names, launcher, ageLabel, toggle, more], spacing: 12)
-            UI.fix(row, width: 544)
+            // One height with or without a second line, the same as the tool rows below.
+            UI.fix(row, width: 544, height: UI.rowHeight)
             profileRows.addArrangedSubview(row)
         }
+        // A new profile or a "Same account" line can make the tab outgrow the window.
+        if window?.isVisible == true { fitWindowToCurrentContent() }
     }
 
     private func launcherCell(_ profile: ClaudeProfile) -> NSView {
@@ -349,6 +373,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         alert.accessoryView = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
+        let others = ClaudeProfiles.listed().filter { $0.folder != profile.folder }
+        let taken = others.map(\.name) + others.compactMap { Settings.shared.alias(forFolder: $0.folder) }
+        if !value.isEmpty, taken.contains(where: { ProfileNames.sameName($0, value) }) {
+            let clash = NSAlert()
+            clash.messageText = "Another profile is already called “\(value)”"
+            clash.informativeText = "Pick a different name, so each row in the bar stays clear."
+            clash.runModal()
+            return
+        }
         Settings.shared.setAlias(value.isEmpty || value == profile.name ? nil : value, forFolder: profile.folder)
         profilesChanged()
     }
@@ -421,7 +454,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         diagnoseResult.stringValue = "Checking…"
         diagnoseResult.isHidden = false
         fitWindowToCurrentContent()
-        runDiagnostics? { [weak self] lines in
+        runDiagnostics?(loginURLField.stringValue, markerField.stringValue) { [weak self] lines in
             DispatchQueue.main.async {
                 self?.diagnoseResult.stringValue = lines.joined(separator: "\n")
                 self?.fitWindowToCurrentContent()
@@ -441,7 +474,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
         rebuildInterfacePopup()
 
-        let resetButton = NSButton(title: "Reset Today's Usage", target: self, action: #selector(resetUsage))
+        let resetButton = NSButton(title: "Reset Today…", target: self, action: #selector(resetUsage))
         let history = ClosureButton(title: "Usage History") { [weak self] in self?.onOpenUsageHistory?() }
         let logButton = ClosureButton(title: "Open Log") {
             if !AppMode.isDemo { NSWorkspace.shared.open(Log.fileURL) }
@@ -454,7 +487,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             [NSGridCell.emptyContentView, binaryCheck],
             [label("Wi-Fi interface:"), interfacePopup],
             [NSGridCell.emptyContentView, startAtLoginCheck],
-            [NSGridCell.emptyContentView, UI.row([resetButton, history, logButton], spacing: 8)],
+            [label("Usage:"), UI.row([history, resetButton], spacing: 8)],
+            [label("Troubleshooting:"), logButton],
         ])
     }
 
@@ -528,7 +562,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
-        guard tabViewItem?.identifier as? String == portalTabIdentifier, !isMeasuringTabs else { return }
+        fitWindowToCurrentContent()
+        guard tabViewItem?.identifier as? String == portalTabIdentifier else { return }
         loadPasswordAsync()
     }
 
@@ -561,10 +596,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private func load() {
         let s = Settings.shared
         unitControl.selectedSegment = s.usageShowLeft ? 0 : 1
+        profileSwitches.removeAll()
         rebuildProfiles()
         codexSwitch.state = s.showCodex ? .on : .off
         antigravitySwitch.state = s.showAntigravity ? .on : .off
-        for (tool, toggle) in toolSwitches { toggle.state = s.hiddenTools.contains(tool.rawValue) ? .off : .on }
+        rebuildTools()
+        rebuildVPNs()
 
         autoLoginCheck.state = s.autoLoginEnabled ? .on : .off
         pollField.stringValue = String(s.pollInterval)
@@ -591,10 +628,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let idx = (0..<interfacePopup.numberOfItems).first {
             (interfacePopup.item(at: $0)?.representedObject as? String) == override
         }
-        interfacePopup.selectItem(at: idx ?? 0)
+        if idx == nil, !override.isEmpty {
+            // An unplugged adapter stays chosen, so an unrelated Save keeps it.
+            interfacePopup.addItem(withTitle: "\(override) (not connected)")
+            interfacePopup.lastItem?.representedObject = override
+            interfacePopup.select(interfacePopup.lastItem)
+        } else {
+            interfacePopup.selectItem(at: idx ?? 0)
+        }
         startAtLoginCheck.state = isLoginItemEnabled() ? .on : .off
 
-        sizeWindowToTallestTab()
+        fitWindowToCurrentContent(animate: false)
         if tabView.selectedTabViewItem?.identifier as? String == portalTabIdentifier { loadPasswordAsync() }
     }
 
@@ -607,7 +651,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         s.hiddenProfiles = Set(profileSwitches.filter { $0.value.state == .off }.keys)
         s.showCodex = codexSwitch.state == .on
         s.showAntigravity = antigravitySwitch.state == .on
-        s.hiddenTools = Set(toolSwitches.filter { $0.value.state == .off }.map(\.key.rawValue))
+        // A hidden tool with no switch right now (not used lately) stays hidden.
+        let listed = Set(toolSwitches.keys.map(\.rawValue))
+        s.hiddenTools = s.hiddenTools.subtracting(listed).union(toolSwitches.filter { $0.value.state == .off }.map(\.key.rawValue))
 
         s.autoLoginEnabled = autoLoginCheck.state == .on
         s.pollInterval = Int(pollField.stringValue) ?? 15
@@ -626,6 +672,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         s.systemInterval = intervalOptions[safe: systemIntervalPopup.indexOfSelectedItem] ?? 2
         s.useBinaryUnits = binaryCheck.state == .on
         s.wifiInterfaceOverride = (interfacePopup.selectedItem?.representedObject as? String) ?? ""
+        // A hidden VPN that macOS no longer lists stays hidden if it comes back.
+        let listedVPNs = Set(vpnSwitches.keys)
+        s.hiddenVPNs = s.hiddenVPNs.subtracting(listedVPNs).union(vpnSwitches.filter { $0.value.state == .off }.keys)
         setLoginItem(startAtLoginCheck.state == .on)
 
         // A Keychain prompt blocks its caller, so the write stays off the main thread.
@@ -644,7 +693,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     @objc private func resetUsage() {
-        guard !AppMode.isDemo else { return }
+        let alert = NSAlert()
+        alert.messageText = "Reset today's usage?"
+        alert.informativeText = "Today's download and upload go back to zero. Earlier days stay."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Reset").hasDestructiveAction = true
+        guard alert.runModal() == .alertSecondButtonReturn, !AppMode.isDemo else { return }
         UsageStore.shared.resetToday()
     }
 
@@ -671,9 +725,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     func present() {
-        load()
+        // Bringing an open window forward must keep what was typed but not saved yet.
+        if window?.isVisible != true {
+            load()
+            window?.center()
+        }
         NSApp.activate(ignoringOtherApps: true)
-        window?.center()
         window?.makeKeyAndOrderFront(nil)
     }
 

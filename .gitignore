@@ -4,3 +4,7 @@ portal.html
 macos-app/build/
 .DS_Store
 .claude/
+*.ovpn
+*.mobileconfig
+*.p12
+*.pfx

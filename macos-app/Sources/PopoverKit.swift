@@ -244,7 +244,7 @@ final class QuotaColumn: NSStackView {
 }
 
 final class StatusDot: NSView {
-    private let filled: Bool
+    var filled: Bool { didSet { needsDisplay = true } }
 
     init(filled: Bool) {
         self.filled = filled
@@ -277,6 +277,22 @@ final class TileView: NSImageView {
     init(mark: ProviderMark) {
         super.init(frame: .zero)
         configure(mark.tile(size: UI.tileSize))
+    }
+
+    init(symbol: String, hex: String) {
+        super.init(frame: .zero)
+        // One configuration, so the white palette keeps the 15 pt semibold size.
+        let style = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold).applying(.init(paletteColors: [.white]))
+        let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(style)
+        configure(NSImage(size: NSSize(width: UI.tileSize, height: UI.tileSize), flipped: false) { rect in
+            UI.color(hex: hex).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: rect.width * 0.3, yRadius: rect.height * 0.3).fill()
+            if let glyph = glyph {
+                let size = glyph.size
+                glyph.draw(in: NSRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height))
+            }
+            return true
+        })
     }
 
     required init?(coder: NSCoder) { nil }

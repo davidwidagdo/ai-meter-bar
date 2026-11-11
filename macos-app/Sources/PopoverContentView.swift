@@ -34,6 +34,57 @@ final class ProfileRowView: NSStackView {
     required init?(coder: NSCoder) { nil }
 }
 
+// The button shows the action and the line under the name shows the state.
+final class VPNRowView: NSStackView {
+    let id: String
+    private let name = UI.label("", weight: .semibold)
+    private let status = UI.label("", size: 11.5, color: .secondaryLabelColor)
+    private let dot = StatusDot(filled: false)
+    private let button = ClosureButton(symbol: "play", label: "")
+
+    init(_ row: VPNPanelRow, onAction: @escaping (String) -> Void) {
+        id = row.id
+        super.init(frame: .zero)
+        orientation = .horizontal
+        alignment = .centerY
+        distribution = .fill
+        spacing = 10
+        edgeInsets = UI.insets()
+        UI.fix(self, height: UI.rowHeight)
+        name.lineBreakMode = .byTruncatingTail
+        status.lineBreakMode = .byTruncatingTail
+        let names = UI.column([name, UI.row([dot, status], spacing: 5)], spacing: 1)
+        UI.flexible(names)
+        let id = row.id
+        button.onClick = { onAction(id) }
+        for view in [TileView(symbol: "lock.shield", hex: ProfileTint.graphite), names, button] as [NSView] {
+            addArrangedSubview(view)
+        }
+        update(row)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func update(_ row: VPNPanelRow) {
+        name.stringValue = row.name
+        name.toolTip = row.name
+        status.stringValue = row.model.detail
+        status.textColor = row.model.warns ? UI.warn : .secondaryLabelColor
+        dot.filled = row.model.isUp
+        let symbol: String, label: String
+        switch row.model.action {
+        case .connect:    (symbol, label) = ("play", "Connect \(row.name)")
+        case .disconnect: (symbol, label) = ("stop", "Disconnect \(row.name)")
+        case .wait:       (symbol, label) = ("ellipsis", "\(row.name) is changing, please wait")
+        case .openApp:    (symbol, label) = ("arrow.up.forward.app", "Open the VPN app for \(row.name)")
+        }
+        button.image = UI.symbol(symbol, description: label)
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
+        button.isEnabled = row.model.action != .wait
+    }
+}
+
 // The stack is the scroll view's document, so the panel can grow up to its limit and then scroll.
 final class PopoverContentView: NSStackView {
     var onRefresh: (() -> Void)?
@@ -44,6 +95,7 @@ final class PopoverContentView: NSStackView {
     var onNewProfile: (() -> Void)?
     var onOpenProfile: ((String) -> Void)?
     var onShowSessions: (() -> Void)?
+    var onVPNAction: ((String) -> Void)?
     var onHeightChange: (() -> Void)?
 
     static let width: CGFloat = 380
@@ -64,7 +116,15 @@ final class PopoverContentView: NSStackView {
     private let weekHeader = UI.label("Week left", size: 11.5, color: .secondaryLabelColor)
     private let profileRows = UI.column([], spacing: 0)
     private lazy var pausedHint: NSStackView = {
-        let row = UI.row([UI.wrappingLabel("Claude paused its usage check. Click its menu bar icon, then Refresh.", size: 11.5, width: 320)])
+        let icon = NSImageView(image: UI.symbol("info.circle", size: 12) ?? NSImage())
+        icon.contentTintColor = .secondaryLabelColor
+        icon.setAccessibilityElement(false)
+        let text = "Claude paused updates: open its menu, then Refresh."
+        let label = UI.label(text, size: 11.5, color: .secondaryLabelColor)
+        label.lineBreakMode = .byTruncatingTail
+        label.toolTip = text
+        UI.flexible(label)
+        let row = UI.row([icon, label], spacing: 6)
         row.edgeInsets = NSEdgeInsets(top: 4, left: UI.rowSide, bottom: 2, right: UI.rowSide)
         return row
     }()
@@ -77,8 +137,10 @@ final class PopoverContentView: NSStackView {
         }
         return CardView(column)
     }()
+    private let vpnRows = UI.column([], spacing: 0)
+    private lazy var vpnCard = Self.sectionCard("VPN", rows: vpnRows)
     private let otherRows = UI.column([], spacing: 0)
-    private lazy var otherCard = CardView(otherRows)
+    private lazy var otherCard = Self.sectionCard("Other Tools", rows: otherRows)
     private let emptyLabel = UI.label("No local AI sessions detected yet", color: .secondaryLabelColor)
     private let cpuValue = UI.label("—", weight: .semibold)
     private let ramValue = UI.label("—", weight: .semibold)
@@ -99,6 +161,7 @@ final class PopoverContentView: NSStackView {
         return CardView(sessionRows)
     }()
     private var sessionsOpen = false
+    var sessionsAreOpen: Bool { sessionsOpen }
 
     override var isFlipped: Bool { true }
 
@@ -110,13 +173,15 @@ final class PopoverContentView: NSStackView {
         edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
         translatesAutoresizingMaskIntoConstraints = false
 
-        let parts: [NSView] = [makeHeader(), alertCard, profilesCard, otherCard, emptyLabel, makeSystemCard(), sessionsHeader, sessionsCard]
+        let header = makeHeader(), system = makeSystemCard()
+        let parts: [NSView] = [header, alertCard, vpnCard, profilesCard, otherCard, emptyLabel, system, sessionsHeader, sessionsCard]
         parts.forEach { addArrangedSubview($0) }
-        for part in [alertCard, profilesCard, otherCard, sessionsCard, parts[0], parts[5], sessionsHeader] as [NSView] {
+        for part in [alertCard, vpnCard, profilesCard, otherCard, sessionsCard, header, system, sessionsHeader] as [NSView] {
             part.translatesAutoresizingMaskIntoConstraints = false
             part.widthAnchor.constraint(equalToConstant: Self.width - 28).isActive = true
         }
         alertCard.isHidden = true
+        vpnCard.isHidden = true
         sessionsCard.isHidden = true
         emptyLabel.isHidden = true
     }
@@ -124,6 +189,20 @@ final class PopoverContentView: NSStackView {
     required init?(coder: NSCoder) { nil }
 
     // MARK: - Building
+
+    // A titled card whose rows line up under the profile rows.
+    private static func sectionCard(_ text: String, rows: NSStackView) -> CardView {
+        let title = UI.sectionTitle(text)
+        UI.flexible(title)
+        let header = UI.row([UI.gap(width: UI.tileSize), title])
+        header.edgeInsets = UI.insets()
+        let column = UI.column([header, rows], spacing: 2)
+        for view in [header, rows] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        }
+        return CardView(column)
+    }
 
     private func makeHeader() -> NSView {
         statusIcon.contentTintColor = .controlAccentColor
@@ -156,15 +235,20 @@ final class PopoverContentView: NSStackView {
         return header
     }
 
-    private let alertText = UI.label("Captive portal detected", weight: .medium)
+    private let alertText = UI.label("", weight: .medium)
+    private var alertOpensSettings = false
+    private lazy var alertButton = ClosureButton(title: "Sign in Now") { [weak self] in
+        guard let self = self else { return }
+        if self.alertOpensSettings { self.onSettings?() } else { self.onSignIn?() }
+    }
 
     private func makeAlertCard() -> CardView {
         let icon = NSImageView(image: UI.symbol("exclamationmark.triangle", description: "Warning") ?? NSImage())
         icon.contentTintColor = UI.warn
         UI.fix(icon, width: UI.tileSize)
+        alertText.lineBreakMode = .byTruncatingTail
         UI.flexible(alertText)
-        let button = ClosureButton(title: "Sign in Now") { [weak self] in self?.onSignIn?() }
-        let row = UI.row([icon, alertText, button])
+        let row = UI.row([icon, alertText, alertButton])
         row.edgeInsets = UI.insets()
         return CardView(row)
     }
@@ -205,12 +289,25 @@ final class PopoverContentView: NSStackView {
         case .connected:  symbol = "wifi"
         case .idle:       symbol = "wifi"
         case .working:    symbol = "arrow.triangle.2.circlepath"
-        case .needsLogin: symbol = "wifi.exclamationmark"
+        case .needsLogin, .needsSettings: symbol = "wifi.exclamationmark"
         }
         statusIcon.image = UI.symbol(symbol, size: 15, weight: .medium)
+        // The header names what happened; the card says what to do, with one button.
+        let alert: (text: String, opensSettings: Bool)?
+        switch state {
+        case .needsLogin:    alert = ("This Wi-Fi needs a sign-in", false)
+        case .needsSettings: alert = ("Check your sign-in details", true)
         // With auto-login off nothing else can sign in, so the button stays while the Mac is offline.
-        let wantsAlert = state == .needsLogin || (state == .idle && !autoLogin)
-        alertText.stringValue = autoLogin ? "Captive portal detected" : "Auto-login is off"
+        case .idle where !autoLogin: alert = ("Auto-login is off", false)
+        default: alert = nil
+        }
+        let wantsAlert = alert != nil
+        if let alert = alert {
+            alertText.stringValue = alert.text
+            alertText.toolTip = alert.text
+            alertOpensSettings = alert.opensSettings
+            alertButton.title = alert.opensSettings ? "Open Settings" : "Sign in Now"
+        }
         if alertCard.isHidden == wantsAlert {
             alertCard.isHidden = !wantsAlert
             onHeightChange?()
@@ -280,7 +377,7 @@ final class PopoverContentView: NSStackView {
         UI.flexible(name)
         let reset = UI.label(quota.reset, size: 10.5, color: .secondaryLabelColor)
         reset.alignment = .right
-        UI.fix(reset, width: 66)
+        UI.fix(reset, width: 78)
         let column = QuotaColumn()
         column.set(quota.cell, spoken: QuotaColumn.spoken(owner: "Antigravity", window: quota.fullName, cell: quota.cell, showLeft: showLeft))
         let row = UI.row([UI.gap(width: UI.tileSize), name, reset, column, UI.gap(width: UI.actionWidth)])
@@ -319,6 +416,24 @@ final class PopoverContentView: NSStackView {
         sessionsToggle.image = UI.symbol(sessionsOpen ? "chevron.down" : "chevron.right", description: "Recent Sessions")
         sessionsCard.isHidden = !sessionsOpen
         if sessionsOpen { onShowSessions?() }
+        onHeightChange?()
+    }
+
+    func setVPN(_ rows: [VPNPanelRow]) {
+        let current = vpnRows.arrangedSubviews.compactMap { $0 as? VPNRowView }
+        // The same accounts are updated in place, so a focused button keeps its focus.
+        if current.map(\.id) == rows.map(\.id) {
+            zip(current, rows).forEach { $0.update($1) }
+            return
+        }
+        vpnRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for row in rows {
+            let view = VPNRowView(row) { [weak self] id in self?.onVPNAction?(id) }
+            vpnRows.addArrangedSubview(view)
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalTo: vpnRows.widthAnchor).isActive = true
+        }
+        vpnCard.isHidden = rows.isEmpty
         onHeightChange?()
     }
 

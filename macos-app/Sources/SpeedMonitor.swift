@@ -24,6 +24,13 @@ final class SpeedMonitor {
         let elapsed = now.timeIntervalSince(lastTime)
         lastTime = now
 
+        // Flush about every 10 s of wall time; it also rolls the day over, counters or not.
+        flushAccum += elapsed
+        if flushAccum >= 10 {
+            flushAccum = 0
+            usage.flush()
+        }
+
         guard let name = NetworkInterface.resolved(override: Settings.shared.wifiInterfaceOverride),
               let current = NetworkStats.counters(for: name) else {
             last = nil
@@ -37,13 +44,6 @@ final class SpeedMonitor {
             usage.add(rx: r.rxDelta, tx: r.txDelta, downRate: r.down, upRate: r.up)
         }
         emit(Sample(down: r.down, up: r.up))
-
-        // Periodic flush (~ every 10s of wall time) to limit disk writes.
-        flushAccum += elapsed
-        if flushAccum >= 10 {
-            flushAccum = 0
-            usage.flush()
-        }
     }
 
     private func emit(_ s: Sample) {
