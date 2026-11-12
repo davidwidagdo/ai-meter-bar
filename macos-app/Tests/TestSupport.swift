@@ -18,11 +18,10 @@ enum T {
     }
 }
 
-// removePersistentDomain leaves an empty plist behind, and the flush must finish before it goes.
-func removeTestDefaults(_ defaults: UserDefaults, suite: String) {
-    defaults.removePersistentDomain(forName: suite)
-    defaults.synchronize()
-    let plist = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Preferences/\(suite).plist")
-    try? FileManager.default.removeItem(at: plist)
+// A suite named by a path is stored there, so test preferences never reach ~/Library/Preferences.
+func testDefaults(_ name: String) -> UserDefaults {
+    guard let work = ProcessInfo.processInfo.environment["AIMETERBAR_TEST_DIR"], work.hasPrefix("/") else {
+        preconditionFailure("Run the tests with Tests/run.sh, which owns and removes their work folder.")
+    }
+    return UserDefaults(suiteName: URL(fileURLWithPath: work).appendingPathComponent(name).path)!
 }

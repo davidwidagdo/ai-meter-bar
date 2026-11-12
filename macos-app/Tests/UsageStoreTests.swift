@@ -1,9 +1,7 @@
 import Foundation
 
 func testUsageStore() {
-    let suite = "aimeterbar.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
-    let d = UserDefaults(suiteName: suite)!
-    defer { removeTestDefaults(d, suite: suite) }
+    let d = testDefaults("usage")
 
     var day = "2026-07-17"
     let store = UsageStore(defaults: d, dayProvider: { day })
@@ -33,9 +31,7 @@ func testUsageStore() {
     T.eq(store2.today.rx, UInt64(0), "reset today")
 
     // Prune: seed 35 historical days, then history stays <= 30.
-    let suite2 = "aimeterbar.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
-    let d2 = UserDefaults(suiteName: suite2)!
-    defer { removeTestDefaults(d2, suite: suite2) }
+    let d2 = testDefaults("usage-prune")
     var recs: [[String: Any]] = []
     for i in 0..<35 {
         recs.append(["day": String(format: "2026-06-%02d", i + 1),
@@ -49,9 +45,7 @@ func testUsageStore() {
     T.expect(store3.history().count <= 30, "history pruned to 30")
 
     // resetToday across a midnight boundary must NOT wipe the prior day.
-    let suite3 = "aimeterbar.tests.\(ProcessInfo.processInfo.globallyUniqueString)"
-    let d3 = UserDefaults(suiteName: suite3)!
-    defer { removeTestDefaults(d3, suite: suite3) }
+    let d3 = testDefaults("usage-midnight")
     var day3 = "2026-08-01"
     let store5 = UsageStore(defaults: d3, dayProvider: { day3 })
     store5.add(rx: 1000, tx: 500, downRate: 10, upRate: 5)
