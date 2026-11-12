@@ -38,12 +38,13 @@ enum MenuBarRenderer {
         s.isEmpty ? 0 : ceil(NSAttributedString(string: s, attributes: attrs).size().width)
     }
 
-    static func image(state: State, columns: [Column]) -> NSImage {
+    static func image(state: State, columns: [Column], shield: Bool = false) -> NSImage {
         let barH = NSStatusBar.system.thickness            // ~22pt
         let iconSize: CGFloat = 14
         let iconConfig = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
-        let icon = NSImage(systemSymbolName: state.symbol, accessibilityDescription: nil)?
+        let symbol = NSImage(systemSymbolName: state.symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(iconConfig)
+        let icon = shield ? symbol.map(withShield) : symbol
 
         guard !columns.isEmpty else {
             let img = icon ?? NSImage(size: NSSize(width: iconSize, height: iconSize))
@@ -96,5 +97,22 @@ enum MenuBarRenderer {
         img.unlockFocus()
         img.isTemplate = true
         return img
+    }
+
+    // A shield in the icon's corner while a VPN is up; a cut-out keeps it apart from the gauge.
+    private static func withShield(_ icon: NSImage) -> NSImage {
+        let size = NSSize(width: 14, height: 14)
+        let badge = NSImage(systemSymbolName: "shield.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 7, weight: .bold))
+        return NSImage(size: size, flipped: false) { rect in
+            icon.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+            guard let badge = badge else { return true }
+            let mark = NSRect(x: rect.maxX - 7, y: 0, width: 7, height: 8)
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(roundedRect: mark.insetBy(dx: -1.5, dy: -1.5), xRadius: 3, yRadius: 3).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            badge.draw(in: mark, from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
     }
 }

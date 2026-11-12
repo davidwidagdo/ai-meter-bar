@@ -61,7 +61,11 @@ if [ -f AppIcon.png ]; then
   rm -rf "$ICONSET"
 fi
 
-# Set CODESIGN_IDENTITY to a stable certificate to stop Keychain and login item prompts on rebuilds.
+# A stable identity stops Keychain and login item prompts on rebuilds; see make-signing-identity.sh.
+LOCAL_IDENTITY="AI Meter Bar Local Signing"
+if [ -z "${CODESIGN_IDENTITY:-}" ] && security find-certificate -c "$LOCAL_IDENTITY" >/dev/null 2>&1; then
+  CODESIGN_IDENTITY="$LOCAL_IDENTITY"
+fi
 echo "==> Code signing with ${CODESIGN_IDENTITY:-an ad-hoc signature}"
 codesign --force --options runtime --sign "${CODESIGN_IDENTITY:--}" "${APP_DIR}"
 

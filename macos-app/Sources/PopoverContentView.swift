@@ -103,7 +103,9 @@ final class VPNRowView: NSStackView {
 // The stack is the scroll view's document, so the panel can grow up to its limit and then scroll.
 final class PopoverContentView: NSStackView {
     var onRefresh: (() -> Void)?
-    var onSettings: (() -> Void)?
+    var onSettings: ((SettingsTab?) -> Void)?
+    var onSetUp: (() -> Void)?
+    var onOpenApp: ((String) -> Void)?
     var onUsageHistory: (() -> Void)?
     var onActivityMonitor: (() -> Void)?
     var onSignIn: (() -> Void)?
@@ -255,7 +257,7 @@ final class PopoverContentView: NSStackView {
         }
         let tools = UI.row([
             refresh,
-            ClosureButton(symbol: "gearshape", label: "Settings") { [weak self] in self?.onSettings?() },
+            ClosureButton(symbol: "gearshape", label: "Settings") { [weak self] in self?.onSettings?(nil) },
         ], spacing: 2)
         let bottom = UI.row([todayButton, UI.spacer(), tools], spacing: 8)
         // A borderless button keeps 2pt around its title, so its text still starts on the grid.
@@ -268,11 +270,17 @@ final class PopoverContentView: NSStackView {
         return header
     }
 
+    private enum AlertAction { case signIn, openSettings, setUp }
+
     private let alertText = UI.label("", weight: .medium)
-    private var alertOpensSettings = false
+    private var alertAction = AlertAction.signIn
     private lazy var alertButton = ClosureButton(title: "Sign in Now") { [weak self] in
         guard let self = self else { return }
-        if self.alertOpensSettings { self.onSettings?() } else { self.onSignIn?() }
+        switch self.alertAction {
+        case .signIn:       self.onSignIn?()
+        case .openSettings: self.onSettings?(.portal)
+        case .setUp:        self.onSetUp?()
+        }
     }
 
     private func makeAlertCard() -> CardView {
@@ -322,24 +330,29 @@ final class PopoverContentView: NSStackView {
         case .connected:  symbol = "wifi"
         case .idle:       symbol = "wifi"
         case .working:    symbol = "arrow.triangle.2.circlepath"
-        case .needsLogin, .needsSettings: symbol = "wifi.exclamationmark"
+        case .needsLogin, .needsSettings, .needsSetup: symbol = "wifi.exclamationmark"
         }
         statusIcon.image = UI.symbol(symbol, size: 15, weight: .medium)
         // The header names what happened; the card says what to do, with one button.
-        let alert: (text: String, opensSettings: Bool)?
+        let alert: (text: String, action: AlertAction)?
         switch state {
-        case .needsLogin:    alert = ("This Wi-Fi needs a sign-in", false)
-        case .needsSettings: alert = ("Check your sign-in details", true)
+        case .needsLogin:    alert = ("This Wi-Fi needs a sign-in", .signIn)
+        case .needsSettings: alert = ("Check your sign-in details", .openSettings)
+        case .needsSetup:    alert = ("This Wi-Fi has a login page", .setUp)
         // With auto-login off nothing else can sign in, so the button stays while the Mac is offline.
-        case .idle where !autoLogin: alert = ("Auto-login is off", false)
+        case .idle where !autoLogin: alert = ("Auto-login is off", .signIn)
         default: alert = nil
         }
         let wantsAlert = alert != nil
         if let alert = alert {
             alertText.stringValue = alert.text
             alertText.toolTip = alert.text
-            alertOpensSettings = alert.opensSettings
-            alertButton.title = alert.opensSettings ? "Open Settings" : "Sign in Now"
+            alertAction = alert.action
+            switch alert.action {
+            case .signIn:       alertButton.title = "Sign in Now"
+            case .openSettings: alertButton.title = "Open Settings"
+            case .setUp:        alertButton.title = "Set up"
+            }
         }
         if alertCard.isHidden == wantsAlert {
             alertCard.isHidden = !wantsAlert
@@ -413,11 +426,11 @@ final class PopoverContentView: NSStackView {
             otherRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
             if let codex = codex { addOtherRow(makeCodexRow(codex, showLeft: showLeft)) }
             if let antigravity = antigravity {
-                addOtherRow(makeToolRow(.antigravity, name: "Antigravity", detail: antigravity.detail))
+                addOtherRow(makeToolRow(.antigravity, name: "Antigravity", detail: antigravity.detail, app: ToolApps.antigravity))
                 for quota in antigravity.quotas { addOtherRow(makeQuotaRow(quota, showLeft: showLeft)) }
             }
             for entry in tools {
-                addOtherRow(makeToolRow(entry.tool.mark, name: entry.tool.displayName, detail: entry.detail))
+                addOtherRow(makeToolRow(entry.tool.mark, name: entry.tool.displayName, detail: entry.detail, app: entry.tool.appBundleID))
             }
         }
         otherCard.isHidden = otherRows.arrangedSubviews.isEmpty
@@ -441,11 +454,18 @@ final class PopoverContentView: NSStackView {
         return row
     }
 
-    private func makeToolRow(_ mark: ProviderMark, name: String, detail: String, quotas: [QuotaColumn] = []) -> NSView {
+    // The action column opens the tool's app when it is installed, like a profile row opens Claude.
+    private func makeToolRow(_ mark: ProviderMark, name: String, detail: String, quotas: [QuotaColumn] = [], app: String) -> NSView {
         let names = UI.column([UI.label(name, weight: .semibold), UI.label(detail, size: 11.5, color: .secondaryLabelColor)], spacing: 1)
         UI.flexible(names)
         var parts: [NSView] = [TileView(mark: mark), names] + quotas
-        if !quotas.isEmpty { parts.append(UI.gap(width: UI.actionWidth)) }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app) {
+            // Named after the app that really opens.
+            let label = "Open \(url.deletingPathExtension().lastPathComponent)"
+            parts.append(ClosureButton(symbol: "arrow.up.forward.app", label: label) { [weak self] in self?.onOpenApp?(app) })
+        } else if !quotas.isEmpty {
+            parts.append(UI.gap(width: UI.actionWidth))
+        }
         let row = UI.row(parts)
         row.edgeInsets = UI.insets()
         UI.fix(row, height: UI.rowHeight)
@@ -462,7 +482,7 @@ final class PopoverContentView: NSStackView {
         let primary = QuotaColumn(), secondary = QuotaColumn()
         primary.set(model.fiveHour, spoken: QuotaColumn.spoken(owner: "Codex", window: "5 hour", cell: model.fiveHour, showLeft: showLeft))
         secondary.set(model.week, spoken: QuotaColumn.spoken(owner: "Codex", window: "weekly", cell: model.week, showLeft: showLeft))
-        return makeToolRow(.openAI, name: "Codex", detail: model.detail, quotas: [primary, secondary])
+        return makeToolRow(.openAI, name: "Codex", detail: model.detail, quotas: [primary, secondary], app: ToolApps.codex)
     }
 
     private func toggleSessions() {

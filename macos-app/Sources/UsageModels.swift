@@ -329,6 +329,20 @@ enum AITool: String, CaseIterable {
         case .cursor:   return ["Library/Application Support/Cursor/User/globalStorage/state.vscdb", ".cursor"]
         }
     }
+
+    // Copilot lives in VS Code, so its row opens VS Code.
+    var appBundleID: String {
+        switch self {
+        case .openCode: return "ai.opencode.desktop"
+        case .copilot:  return "com.microsoft.VSCode"
+        case .cursor:   return "com.todesktop.230313mzl4w4u92"
+        }
+    }
+}
+
+enum ToolApps {
+    static let codex = "com.openai.codex"
+    static let antigravity = "com.google.antigravity"
 }
 
 struct LocalToolStatus: Equatable {

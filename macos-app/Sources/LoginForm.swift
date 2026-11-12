@@ -8,8 +8,12 @@ struct FormField {
 
 // A login form parsed out of a captive-portal page.
 struct LoginForm {
+    private static let usernameTypes = ["text", "email", "tel"]
+
     let action: String   // raw action attribute (may be relative or empty)
     var fields: [FormField]
+
+    var asksUsername: Bool { fields.contains { Self.usernameTypes.contains($0.type) } }
 
     // Hidden fields (tokens, dst, popup) stay as the portal sent them.
     func filled(username: String, password: String) -> [(String, String)] {
@@ -17,7 +21,7 @@ struct LoginForm {
         for i in result.indices where result[i].type == "password" {
             result[i].value = password
         }
-        if let idx = result.firstIndex(where: { ["text", "email", "tel"].contains($0.type) }) {
+        if let idx = result.firstIndex(where: { Self.usernameTypes.contains($0.type) }) {
             result[idx].value = username
         }
         return result.map { ($0.name, $0.value) }

@@ -4,7 +4,7 @@ import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let client = PortalClient()
-    private var timer: Timer?
+    private lazy var signIn = SignInCycle(portal: client)
     private var settingsWC: SettingsWindowController?
     private var usageHistoryWC: UsageHistoryWindowController?
 
@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let statusController = StatusPopoverController()
     private let vpn = VPNController()
+    private let notifier = Notifier()
     private let usageCoordinator = AIUsageCoordinator()
     private var usageTimer: Timer?
     private static let usageRefreshInterval: TimeInterval = 60
@@ -20,29 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var meterClock = MeterClock { [weak self] tick in self?.meterTick(tick) }
     private var displayAsleep = false
 
-    private var isBusy = false
-    private var pendingManual = false
-    private var savingSettings = false
-    private var runningManual = false
-    private var sawCaptivity = false
-    private var lastRouter: String?
-    // One pause per router, so moving between networks never clears the pause on the first one.
-    private var throttles: [String: LoginThrottle] = [:]
-    private var throttle: LoginThrottle {
-        get { throttles[lastRouter ?? ""] ?? LoginThrottle() }
-        set { throttles[lastRouter ?? ""] = newValue }
-    }
-
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.davidwidagdo.aimeterbar.path")
-    private var lastEventCheck = Date.distantPast
     private var lastSignature: NetworkSignature?
-    private var systemAsleep = false
-
-    // Portals often answer the first probes with a bare redirect or no reply; retry soon.
-    private static let quickRetryDelay: TimeInterval = 3
-    private static let quickRetryLimit = 4
-    private var quickRetriesLeft = 0
     private static let captivePopupBundleID = "com.apple.CaptiveNetworkAssistant"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -54,10 +35,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installMainMenu()
         statusController.delegate = self
         statusController.install()
-        usageCoordinator.onUpdate = { [weak self] snapshot in self?.statusController.setSnapshot(snapshot) }
+        usageCoordinator.onUpdate = { [weak self] snapshot in
+            self?.statusController.setSnapshot(snapshot)
+            self?.notifier.quotas(StatusPopoverController.quotaWatches(snapshot, settings: .shared, now: Date()))
+        }
         usageCoordinator.onBusyChange = { [weak self] busy in self?.statusController.setRefreshing(busy) }
         statusController.vpnRows = { [weak self] in self?.vpn.rows(now: Date()) ?? [] }
         vpn.onChange = { [weak self] in self?.statusController.vpnChanged() }
+        vpn.onDropped = { [weak self] service in
+            // A VPN hidden from the panel stays quiet here too.
+            guard !Settings.shared.hiddenVPNs.contains(service.id) else { return }
+            self?.notifier.vpnDropped(name: service.name)
+        }
         vpn.refresh()
         if AppMode.isDemo {
             showDemoData()
@@ -65,7 +54,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Log.write("App started.")
         setUpMeters()
-        startMonitoring()
+        notifier.start()
+        signIn.onStatus = { [weak self] state, text in
+            self?.statusController.setStatus(state, text)
+            self?.notifier.portal(state, text: text)
+        }
+        signIn.onLoggedIn = { [weak self] date in self?.statusController.setLastLogin(date) }
+        signIn.dismissPopup = { Self.dismissCaptivePopup() }
+        signIn.start()
         startEventTriggers()
         usageCoordinator.refresh(live: true)
         syncUsageTimer()
@@ -175,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usageTimer = nil
         guard Settings.shared.menuBarMode.showsAI else { return }
         let t = Timer(timeInterval: Self.usageRefreshInterval, repeats: true) { [weak self] _ in
-            guard let self = self, !self.systemAsleep else { return }
+            guard let self = self, !self.signIn.systemAsleep else { return }
             self.usageCoordinator.refresh()
         }
         t.tolerance = Self.usageRefreshInterval * 0.1
@@ -184,19 +180,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handlePathUpdate(_ path: NWPath) {
-        guard !systemAsleep else { return }
+        guard !signIn.systemAsleep else { return }
         let signature = client.networkSignature(for: path)
         guard signature != lastSignature else { return }
         lastSignature = signature
-        sawCaptivity = false
-        if let router = signature.router { lastRouter = router }
-        triggerCheck(reason: "network changed")
+        signIn.networkChanged(router: signature.router)
     }
 
-    // Dark wakes run the app for seconds with no network, and no didWake ever marks them.
     @objc private func systemWillSleep() {
-        systemAsleep = true
-        pendingManual = false
+        signIn.sleep()
         Log.write("System going to sleep.")
         displayAsleep = true
     }
@@ -212,28 +204,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Also clears the sleep flag if didWake never arrived, so auto-login cannot stay stuck off.
     @objc private func screensDidWake() {
-        if systemAsleep { wakeUp() }
+        if signIn.systemAsleep { wakeUp() }
         resumeDrawing()
     }
 
     private func wakeUp() {
-        systemAsleep = false
         lastSignature = nil
         // Events can be missed in sleep, so every VPN's state is read again.
         vpn.refresh()
-        triggerCheck(reason: "system woke")
+        signIn.wake()
     }
 
-    private func triggerCheck(reason: String) {
-        guard Settings.shared.autoLoginEnabled else { return }
-        let now = Date()
-        guard now.timeIntervalSince(lastEventCheck) > 2 else { return }
-        lastEventCheck = now
-        quickRetriesLeft = Self.quickRetryLimit
-        Log.write("Trigger (\(reason)) — checking session.")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            self?.checkAndLogin()
-        }
+    private static func dismissCaptivePopup() {
+        let popups = NSRunningApplication.runningApplications(withBundleIdentifier: captivePopupBundleID)
+        guard !popups.isEmpty else { return }
+        popups.forEach { if !$0.terminate() { $0.forceTerminate() } }
+        Log.write("Closed the macOS captive-portal popup.")
     }
 
     // MARK: - Main menu (Edit menu keeps copy/paste working in Settings)
@@ -257,208 +243,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editItem.submenu = editMenu
 
         NSApp.mainMenu = mainMenu
-    }
-
-    // MARK: - Login cycle
-
-    private func startMonitoring() {
-        timer?.invalidate()
-        timer = nil
-        checkAndLogin()
-        guard Settings.shared.autoLoginEnabled else { return }
-        let interval = TimeInterval(Settings.shared.pollInterval)
-        let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            self?.checkAndLogin()
-        }
-        t.tolerance = 2
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
-    }
-
-    private func checkAndLogin() {
-        guard !systemAsleep, !savingSettings else { return }
-        guard Settings.shared.autoLoginEnabled else {
-            refreshStatus()
-            return
-        }
-        runCycle(manual: false)
-    }
-
-    private func refreshStatus() {
-        guard !isBusy else { return }
-        client.checkConnectivity { [weak self] state in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                if state == .connected {
-                    self.statusController.setStatus(.connected, "Connected")
-                } else {
-                    self.statusController.setStatus(.idle, "Offline (auto-login off)")
-                }
-            }
-        }
-    }
-
-    private func runCycle(manual: Bool) {
-        guard !isBusy else {
-            // A click waits out an automatic check; a repeat click during a manual one is dropped.
-            if manual, !runningManual { pendingManual = true }
-            return
-        }
-        isBusy = true
-        runningManual = manual
-        if manual { throttle.reset() }
-        client.checkConnectivity { [weak self] state in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                if state == .connected {
-                    self.sessionIsLive()
-                    return
-                }
-                self.client.inspectCaptivePage { [weak self] ours, page in
-                    DispatchQueue.main.async {
-                        guard let self = self else { return }
-                        // A failed probe alone is no portal; a page that answered in its place is.
-                        if page != nil { self.sawCaptivity = true }
-                        if ours, page?.isLoggedIn == true {
-                            self.sessionIsLive()
-                            return
-                        }
-                        guard ours, let page = page else {
-                            self.statusController.setStatus(.idle, "No portal on this network")
-                            let detail = page.map { "not our portal page (\(self.client.describe($0)))" }
-                                ?? "no captive page (offline or still joining)"
-                            Log.write(manual ? "Manual login: \(detail) — nothing to do." : "No internet, \(detail) — skipping.")
-                            self.finishCycle()
-                            self.scheduleQuickRetry()
-                            return
-                        }
-                        // A page that came over a VPN or another link is not this Wi-Fi's portal.
-                        guard page.overWiFi != false else {
-                            self.statusController.setStatus(.idle, "Portal page is not on Wi-Fi")
-                            Log.write("Portal page did not arrive over Wi-Fi; nothing sent.")
-                            self.finishCycle()
-                            return
-                        }
-                        guard self.throttle.allowsAttempt(now: Date()) else {
-                            // A wrong password stays on screen; waiting alone cannot fix it.
-                            if self.statusController.portalState != .needsSettings {
-                                self.statusController.setStatus(.needsLogin, "Login paused after a rejection")
-                            }
-                            self.finishCycle()
-                            return
-                        }
-                        // A cycle begun before sleep can finish in a dark wake, when no POST should go out.
-                        guard manual || !self.systemAsleep else {
-                            self.finishCycle()
-                            return
-                        }
-                        self.quickRetriesLeft = 0
-                        self.statusController.setStatus(.working, "Logging in…")
-                        Log.write(manual ? "Manual login — submitting." : "Captive portal detected — logging in.")
-                        self.performLogin(page: page)
-                    }
-                }
-            }
-        }
-    }
-
-    private func sessionIsLive() {
-        statusController.setStatus(.connected, "Connected")
-        quickRetriesLeft = 0
-        throttle.reset()
-        // The probe can pass over another link while Wi-Fi still waits on its portal popup.
-        if sawCaptivity { dismissCaptivePopup() }
-        finishCycle()
-    }
-
-    private func performLogin(page: CaptivePage) {
-        // Started before the POST: a request lost to sleep must count as slept too.
-        let wallStart = Date()
-        let uptimeStart = ProcessInfo.processInfo.systemUptime
-        client.login(page: page) { [weak self] submit in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                switch submit {
-                case .sent, .failed:
-                    self.confirmLogin(wallStart: wallStart, uptimeStart: uptimeStart, sendFailed: submit == .failed)
-                case .refused:
-                    self.loginBlocked("Login refused")
-                case .noPassword:
-                    self.loginBlocked("No password saved")
-                }
-            }
-        }
-    }
-
-    private func loginBlocked(_ status: String) {
-        throttle.recordRejected(now: Date())
-        statusController.setStatus(.needsSettings, status)
-        finishCycle()
-    }
-
-    private func confirmLogin(wallStart: Date, uptimeStart: TimeInterval, sendFailed: Bool) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            self?.client.confirmLogin { confirmed, portalStillAsking in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    let slept = LoginOutcome.slept(wallElapsed: Date().timeIntervalSince(wallStart),
-                                                   uptimeElapsed: ProcessInfo.processInfo.systemUptime - uptimeStart)
-                    // A portal cannot have rejected credentials it never received.
-                    let verdict = LoginOutcome.verdict(slept: slept || sendFailed, confirmed: confirmed, portalStillAsking: portalStillAsking)
-                    self.finishLogin(verdict, slept: slept)
-                }
-            }
-        }
-    }
-
-    private func finishLogin(_ verdict: LoginVerdict, slept: Bool) {
-        switch verdict {
-        case .loggedIn:
-            statusController.setStatus(.connected, "Connected")
-            statusController.setLastLogin(Date())
-            throttle.reset()
-            Log.write("Login OK.")
-            dismissCaptivePopup()
-            finishCycle()
-        case .rejected:
-            throttle.recordRejected(now: Date())
-            statusController.setStatus(.needsSettings, "Login failed")
-            Log.write("Login FAILED — portal still asks for credentials.")
-            finishCycle()
-        case .unconfirmed:
-            statusController.setStatus(.needsLogin, "Login unconfirmed, rechecking")
-            Log.write("Login unconfirmed (slept: \(slept)) — rechecking.")
-            // Rechecks continue, but only a nap excuses another POST: portals may not show a readable form.
-            if !slept { throttle.recordRejected(now: Date()) }
-            finishCycle()
-            quickRetriesLeft = Self.quickRetryLimit
-            scheduleQuickRetry()
-        }
-    }
-
-    private func finishCycle() {
-        isBusy = false
-        runningManual = false
-        guard pendingManual, !systemAsleep else { return }
-        pendingManual = false
-        DispatchQueue.main.async { [weak self] in self?.runCycle(manual: true) }
-    }
-
-    private func scheduleQuickRetry() {
-        guard quickRetriesLeft > 0 else { return }
-        quickRetriesLeft -= 1
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.quickRetryDelay) { [weak self] in
-            self?.checkAndLogin()
-        }
-    }
-
-    // Only called once the session is confirmed, when the macOS portal popup is stale.
-    private func dismissCaptivePopup() {
-        sawCaptivity = false
-        let popups = NSRunningApplication.runningApplications(withBundleIdentifier: Self.captivePopupBundleID)
-        guard !popups.isEmpty else { return }
-        popups.forEach { if !$0.terminate() { $0.forceTerminate() } }
-        Log.write("Closed the macOS captive-portal popup.")
     }
 
     // MARK: - Login Items
@@ -510,10 +294,10 @@ extension AppDelegate: StatusPopoverDelegate {
     func popoverDidOpen() {
         guard !AppMode.isDemo else { return }
         // Someone clicking the menu bar proves the Mac is awake, whatever the sleep flag says.
-        if systemAsleep { wakeUp() }
+        if signIn.systemAsleep { wakeUp() }
         usageCoordinator.refresh(live: true)
         vpn.refresh()
-        if !Settings.shared.autoLoginEnabled { refreshStatus() }
+        if !Settings.shared.autoLoginEnabled { signIn.refreshStatus() }
         systemMonitor.tick()
         startMeterClock()
     }
@@ -526,13 +310,13 @@ extension AppDelegate: StatusPopoverDelegate {
     func popoverRefresh() {
         guard !AppMode.isDemo else { return }
         usageCoordinator.refresh(live: true)
-        checkAndLogin()
+        signIn.check()
     }
 
     func popoverSignIn() {
         guard !AppMode.isDemo else { return }
         Log.write("Manual login requested.")
-        runCycle(manual: true)
+        signIn.signIn()
     }
 
     func popoverVPNAction(id: String) {
@@ -571,7 +355,15 @@ extension AppDelegate: StatusPopoverDelegate {
         }
     }
 
-    func popoverOpenSettings() {
+    func popoverOpenSettings(tab: SettingsTab?) {
+        openSettings(tab: tab, detect: false)
+    }
+
+    func popoverSetUpPortal() {
+        openSettings(tab: .portal, detect: true)
+    }
+
+    private func openSettings(tab: SettingsTab?, detect: Bool) {
         if settingsWC == nil {
             settingsWC = SettingsWindowController()
         }
@@ -589,10 +381,18 @@ extension AppDelegate: StatusPopoverDelegate {
             }
             self?.client.diagnose(loginURL: loginURL, marker: marker, completion: completion)
         }
-        settingsWC?.onSaveStarted = { [weak self] in self?.savingSettings = true }
+        settingsWC?.runDetect = { [weak self] completion in
+            guard !AppMode.isDemo else {
+                completion(PortalDetection(outcome: .online))
+                return
+            }
+            self?.client.detect(completion: completion)
+        }
+        settingsWC?.onNotifyEnabled = { [weak self] in self?.notifier.requestPermission() }
+        settingsWC?.onSaveStarted = { [weak self] in self?.signIn.savingSettings = true }
         settingsWC?.onSave = { [weak self] in
             guard let self = self else { return }
-            self.savingSettings = false
+            self.signIn.savingSettings = false
             guard !AppMode.isDemo else {
                 self.vpn.refresh()
                 self.statusController.settingsChanged()
@@ -600,13 +400,12 @@ extension AppDelegate: StatusPopoverDelegate {
             }
             Log.write("Settings updated.")
             self.vpn.refresh()
-            self.throttles.removeAll()
-            self.startMonitoring()
+            self.signIn.settingsSaved()
             self.restartMeters()
             self.syncUsageTimer()
             self.usageCoordinator.refresh()
             self.statusController.settingsChanged()
         }
-        settingsWC?.present()
+        settingsWC?.present(tab: tab, detect: detect)
     }
 }

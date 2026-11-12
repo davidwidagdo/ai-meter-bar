@@ -2,7 +2,8 @@ import Cocoa
 
 enum PortalState {
     // needsSettings: a retry cannot help until the password or Login URL changes.
-    case connected, idle, working, needsLogin, needsSettings
+    // needsSetup: a login page showed up while no sign-in details are saved.
+    case connected, idle, working, needsLogin, needsSettings, needsSetup
 }
 
 protocol StatusPopoverDelegate: AnyObject {
@@ -10,7 +11,8 @@ protocol StatusPopoverDelegate: AnyObject {
     func popoverDidClose()
     func popoverRefresh()
     func popoverSignIn()
-    func popoverOpenSettings()
+    func popoverOpenSettings(tab: SettingsTab?)
+    func popoverSetUpPortal()
     func popoverOpenUsageHistory()
     func popoverNewProfile()
     func popoverOpenProfile(folder: String)
@@ -40,6 +42,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
     private var snapshot = AISnapshot()
     private var lastRenderKey: String?
     private var refreshing = false
+    private var vpnUp: [String] = []
 
     func install() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -72,7 +75,12 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         popover.delegate = self
 
         content.onRefresh = { [weak self] in self?.delegate?.popoverRefresh() }
-        content.onSettings = { [weak self] in self?.closeThen { $0.popoverOpenSettings() } }
+        content.onSettings = { [weak self] tab in self?.closeThen { $0.popoverOpenSettings(tab: tab) } }
+        content.onSetUp = { [weak self] in self?.closeThen { $0.popoverSetUpPortal() } }
+        content.onOpenApp = { [weak self] bundleID in
+            self?.popover.performClose(nil)
+            Self.openApp(bundleID: bundleID)
+        }
         content.onUsageHistory = { [weak self] in self?.closeThen { $0.popoverOpenUsageHistory() } }
         content.onNewProfile = { [weak self] in self?.closeThen { $0.popoverNewProfile() } }
         content.onSignIn = { [weak self] in self?.delegate?.popoverSignIn() }
@@ -89,7 +97,11 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
     }
 
     private static func openActivityMonitor() {
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.ActivityMonitor") else { return }
+        openApp(bundleID: "com.apple.ActivityMonitor")
+    }
+
+    private static func openApp(bundleID: String) {
+        guard !AppMode.isDemo, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
         NSWorkspace.shared.openApplication(at: url, configuration: .init())
     }
 
@@ -169,9 +181,16 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         if isOpen { content.setRefreshing(refreshing) }
     }
 
+    // Also feeds the menu bar shield, so it runs on every VPN event, open or not.
     func vpnChanged() {
+        let rows = vpnRows()
+        let up = rows.filter(\.model.isUp).map(\.name)
+        if up != vpnUp {
+            vpnUp = up
+            renderMenuBar()
+        }
         guard isOpen else { return }
-        content.setVPN(vpnRows())
+        content.setVPN(rows)
         resizePopover()
     }
 
@@ -214,6 +233,24 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
 
     // MARK: - Menu bar
 
+    // The quotas the menu bar shows, always as left, for the low-quota notification.
+    static func quotaWatches(_ snapshot: AISnapshot, settings: Settings, now: Date) -> [QuotaWatch] {
+        var watches: [QuotaWatch] = []
+        let visible = snapshot.profiles.filter { !settings.hiddenProfiles.contains($0.folder) }
+        if let active = AISnapshot.active(visible) {
+            let name = settings.alias(forFolder: active.folder) ?? active.name
+            let model = ProfileRowModel.make(name: name, usage: active.usage, running: active.isRunning, showLeft: true, now: now)
+            watches.append(QuotaWatch(key: "claude:\(active.folder):5h", title: "Claude \(name) 5-hour quota", cell: model.fiveHour))
+            watches.append(QuotaWatch(key: "claude:\(active.folder):week", title: "Claude \(name) weekly quota", cell: model.week))
+        }
+        if settings.showCodex, let reading = snapshot.codex {
+            let model = CodexRowModel.make(reading, showLeft: true, now: now)
+            watches.append(QuotaWatch(key: "codex:5h", title: "Codex 5-hour quota", cell: model.fiveHour))
+            watches.append(QuotaWatch(key: "codex:week", title: "Codex weekly quota", cell: model.week))
+        }
+        return watches
+    }
+
     private func aiCells() -> (claude: (five: QuotaCell, week: QuotaCell)?, codex: QuotaCell?) {
         let settings = Settings.shared
         let now = Date()
@@ -232,7 +269,7 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
     private func renderState() -> MenuBarRenderer.State {
         switch portalState {
         case .working:    return .working
-        case .needsLogin, .needsSettings: return .needsLogin
+        case .needsLogin, .needsSettings, .needsSetup: return .needsLogin
         default: break
         }
         guard Settings.shared.menuBarMode.showsAI else { return .normal }
@@ -275,12 +312,13 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
         let columns = meterColumns()
         let state = renderState()
         // Rebuilding the image is the costliest idle work, so skip it when nothing visible changed.
-        let key = renderKey(state, columns)
+        let shield = !vpnUp.isEmpty
+        let key = renderKey(state, columns) + (shield ? "\u{4}" : "")
         let tip = tooltip()
         if button.toolTip != tip { button.toolTip = tip }
         guard key != lastRenderKey else { return }
         lastRenderKey = key
-        button.image = MenuBarRenderer.image(state: state, columns: columns)
+        button.image = MenuBarRenderer.image(state: state, columns: columns, shield: shield)
         button.imagePosition = .imageOnly
     }
 
@@ -305,7 +343,8 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
             ProfileRowModel.make(name: settings.alias(forFolder: active.folder) ?? active.name, usage: active.usage, running: active.isRunning, showLeft: true, now: now)
         }
         let codex = settings.showCodex ? snapshot.codex.map { CodexRowModel.make($0, showLeft: true, now: now) } : nil
-        return ([status] + AITooltip.lines(profile: profile, codex: codex)).joined(separator: "\n")
+        let vpn = vpnUp.isEmpty ? [] : ["VPN: \(vpnUp.joined(separator: ", ")) connected"]
+        return ([status] + vpn + AITooltip.lines(profile: profile, codex: codex)).joined(separator: "\n")
     }
 }
 

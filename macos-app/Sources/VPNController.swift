@@ -4,6 +4,7 @@ import SystemConfiguration
 // Asks macOS to connect or disconnect; each VPN app keeps its own profiles and passwords.
 final class VPNController {
     var onChange: (() -> Void)?
+    var onDropped: ((VPNService) -> Void)?
 
     private static let connectTimeout: TimeInterval = 45
     private static let scutil = "/usr/sbin/scutil"
@@ -12,6 +13,9 @@ final class VPNController {
     private var links: [String: VPNLink] = [:]
     private var connectedSince: [String: Date] = [:]
     private var failed: Set<String> = []
+    private var stoppedHere: Set<String> = []
+    // Seen up since launch, including at the first listing, unlike connectedSince.
+    private var seenUp: Set<String> = []
     private var deadlines: [String: DispatchWorkItem] = [:]
     private var listing = false
 
@@ -67,12 +71,20 @@ final class VPNController {
             deadlines.removeValue(forKey: id)?.cancel()
             connectedSince[id] = nil
             failed.remove(id)
+            seenUp.remove(id)
+            stoppedHere.remove(id)
         }
         // The listed state is used as is: asking each connection again can block the main thread.
         services = listed
         for service in listed {
             if links[service.id] == nil { links[service.id] = VPNLink(id: service.id, owner: self) }
-            if service.status == .connected { failed.remove(service.id) } else { connectedSince[service.id] = nil }
+            if service.status == .connected {
+                failed.remove(service.id)
+                seenUp.insert(service.id)
+            } else {
+                connectedSince[service.id] = nil
+                seenUp.remove(service.id)
+            }
         }
         onChange?()
     }
@@ -84,9 +96,14 @@ final class VPNController {
         case .connected:
             // Kept through a reassert, so the age counts from the first connect the bar saw.
             if connectedSince[id] == nil { connectedSince[id] = Date() }
+            seenUp.insert(id)
+            stoppedHere.remove(id)
             deadlines.removeValue(forKey: id)?.cancel()
             failed.remove(id)
         case .off, .invalid:
+            // Up until now and not stopped from the panel: it dropped, or was stopped in its own app.
+            let wasUp = seenUp.remove(id) != nil, stoppedByUs = stoppedHere.remove(id) != nil
+            if wasUp, !stoppedByUs { onDropped?(services[index]) }
             connectedSince[id] = nil
             // Dropping back during an awaited connect fails it now, not at the timeout.
             if deadlines.removeValue(forKey: id) != nil { fail(id) }
@@ -117,6 +134,7 @@ final class VPNController {
     private func disconnect(_ index: Int) {
         let id = services[index].id
         deadlines.removeValue(forKey: id)?.cancel()
+        stoppedHere.insert(id)
         services[index].status = .disconnecting
         let stopped = links[id]?.disconnect() ?? false
         if !stopped { Self.runScutil(["--nc", "stop", id]) }

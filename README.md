@@ -16,8 +16,9 @@
 
 - **AI quota.** Claude's 5-hour and weekly quota per account, plus live Codex and Antigravity quota. Every number shows its age. OpenCode, GitHub Copilot and Cursor show when they were last used.
 - **Claude profiles.** Open a profile in one click, create one with its own launcher, or move one to the Trash.
-- **VPN.** Connect or disconnect each VPN with one click, without opening the VPN app. Hide the ones you do not need.
-- **Portal sign-in.** Signs in to a Wi-Fi login page by itself after a network change or wake.
+- **VPN.** Connect or disconnect each VPN with one click, without opening the VPN app. A small shield on the menu bar icon shows one is up. Hide the ones you do not need.
+- **Portal sign-in.** Signs in to a Wi-Fi login page by itself after a network change or wake. **Detect** finds a new portal's address for you.
+- **Notifications (optional).** A sign-in that failed, a VPN that dropped, or a quota at 10% or less, once per reset.
 - **Meters.** Speed, today's usage, 30-day history, CPU, RAM and memory pressure.
 - **Light.** Live AI numbers are read only at launch and when the panel opens, and no helper stays running.
 
@@ -59,16 +60,17 @@ open "/Applications/AI Meter Bar.app"
 ```
 
 1. Click the gauge in the menu bar to open the panel.
-2. **Portal sign-in:** open **Settings**, then **Portal**, and enter the username, password and Login URL.
-3. **VPN:** a VPN shows up once it is listed in System Settings, VPN. For OpenVPN Connect this needs version 3.9 or later. Hide any VPN in **Settings**, **Accounts**.
+2. **Portal sign-in:** join the Wi-Fi while signed out. The panel says "This Wi-Fi has a login page"; click **Set up**, check the address **Detect** filled in, type the username and password, then **Save**.
+3. **VPN:** a VPN shows up once it is listed in System Settings, VPN. For OpenVPN Connect this needs version 3.9 or later. Hide any VPN in **Settings**, **Display**.
 
 ## Settings
 
 | Tab | What it holds |
 | --- | --- |
-| **Accounts** | Quota as left or used, which profiles, tools and VPNs appear, profile names, colors and launchers |
-| **Portal** | Auto-login, sign-in details, portal marker, and **Diagnose**, which checks the typed values and sends nothing |
-| **General** | Menu bar content, update interval, units, Wi-Fi interface, start at login, usage history, Quit |
+| **Claude** | Which profiles appear, their names, colors and launchers |
+| **Display** | Menu bar content, quota as left or used, units, which tools and VPNs appear |
+| **Portal** | Auto-login, sign-in details, check interval, **Detect** and **Diagnose**, which read the portal and send nothing |
+| **General** | Update interval, Wi-Fi interface, start at login, notifications, usage history, log, Quit |
 
 ## Scripts
 
@@ -77,7 +79,8 @@ open "/Applications/AI Meter Bar.app"
 | `macos-app/build.sh` | Builds the app and a `.dmg`; `--no-dmg` skips the image, `--install` copies the app to `/Applications` |
 | `macos-app/Tests/run.sh` | Unit tests |
 | `macos-app/make-appicon.swift` | Regenerates the app icon |
-| `discover-portal.sh` | Shows a portal's login form when the app cannot read it; copy `config.example` to `config` first |
+| `macos-app/make-signing-identity.sh` | Run once: a local signing identity, so rebuilds stop asking for Keychain access; asks for your password |
+| `discover-portal.sh` | Shows a portal's login form when **Detect** cannot read it; copy `config.example` to `config` first |
 
 ## Security and privacy
 
@@ -94,7 +97,8 @@ open "/Applications/AI Meter Bar.app"
 - Antigravity's quota needs Antigravity to be open. Its local server and Claude's `--user-data-dir` option are not public interfaces, so an update could change them.
 - One VPN app runs one tunnel at a time, so connecting a second profile of the same app ends the first.
 - MikroTik CHAP portals are not supported. **Diagnose** tells you if a page looks like one.
-- Builds are ad-hoc signed unless you set `CODESIGN_IDENTITY`, so each rebuild asks once for Keychain access.
+- Builds are ad-hoc signed until you run `make-signing-identity.sh` or set `CODESIGN_IDENTITY`, so each rebuild asks once for Keychain access.
+- The panel's glass popover costs macOS about 80 MB for a moment the first time it opens; the app itself stays near 40 MB.
 
 Developer notes: [macos-app/README.md](macos-app/README.md).
 
