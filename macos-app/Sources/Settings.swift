@@ -61,6 +61,7 @@ final class Settings {
         static let hiddenProfiles = "hiddenClaudeProfiles"
         static let hiddenTools = "hiddenAITools"
         static let hiddenVPNs = "hiddenVPNs"
+        static let notifyAttention = "notifyAttention"
     }
 
     private init() {
@@ -188,6 +189,11 @@ final class Settings {
                                           system: defaults.object(forKey: Key.systemInterval) as? Int)
         }
         set { defaults.set(newValue, forKey: Key.updateInterval) }
+    }
+
+    var notifyAttention: Bool {
+        get { defaults.bool(forKey: Key.notifyAttention) }
+        set { defaults.set(newValue, forKey: Key.notifyAttention) }
     }
 
     var useBinaryUnits: Bool {

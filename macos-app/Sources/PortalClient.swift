@@ -195,6 +195,17 @@ final class PortalClient {
         }
     }
 
+    // Read-only like diagnose: follows the probe to whatever page answers, without a marker.
+    func detect(completion: @escaping (PortalDetection) -> Void) {
+        checkConnectivity { [weak self] state in
+            guard let self = self else { return }
+            guard state != .connected else { return completion(PortalDetect.result(connected: true, page: nil, ownAddresses: [])) }
+            self.fetchCaptivePage(marker: "", portalHost: nil) { page in
+                completion(PortalDetect.result(connected: false, page: page, ownAddresses: self.ownAddresses))
+            }
+        }
+    }
+
     // The marker gates the gateway page: a router's own admin login must never get the password.
     private func fetchCaptivePage(marker: String, portalHost: String?, completion: @escaping (CaptivePage?) -> Void) {
         guard !marker.isEmpty, let gateway = wifiGateway, let start = URL(string: "http://\(gateway)/login") else {

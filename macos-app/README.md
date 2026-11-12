@@ -13,20 +13,24 @@ Developer notes. See the [main README](../README.md) for what the app does.
 
 | Area | Files |
 | --- | --- |
-| Portal sign-in | `PortalClient`, `CappedFetch`, `LoginForm`, `LoginOutcome`, `LoginThrottle`, `PortalDiagnostics`, `Keychain`, `PortalSecret` |
+| Portal sign-in | `SignInCycle`, `PortalClient`, `CappedFetch`, `LoginForm`, `LoginOutcome`, `LoginThrottle`, `PortalDiagnostics`, `Keychain`, `PortalSecret` |
 | VPN | `VPN` (list parser and row model), `VPNController` |
 | Meters | `MeterClock`, `SpeedMonitor`, `SystemMonitor`, `UsageStore`, `UsageHistoryWindowController` |
 | AI usage | `LocalUsageReaders`, `LiveUsage`, `UsageModels`, `AIUsageCoordinator` |
 | Claude profiles | `ClaudeProfiles`, `ClaudeInstances`, `ClaudeLauncher`, `Monogram`, `NewProfileWindowController` |
-| Interface | `StatusPopoverController`, `PopoverContentView`, `PopoverKit`, `ProviderMark`, `MenuBarRenderer`, `SettingsWindowController` |
+| Interface | `StatusPopoverController`, `PopoverContentView`, `PopoverKit`, `ProviderMark`, `MenuBarRenderer`, `Notifier` |
+| Settings | `SettingsWindowController`, `SettingsKit`, one file per tab: `SettingsClaudeTab`, `SettingsDisplayTab`, `SettingsPortalTab`, `SettingsGeneralTab` |
 
 ## Build
 
-`build.sh` uses system tools only, compiles every file in `Sources`, warns when uncommitted or untracked files are part of the build, and stamps the commit into `Info.plist` as `AIMeterBarCommit` (`-dirty` when it warned).
+`build.sh` uses system tools only, compiles every file in `Sources`, warns when uncommitted or untracked files are part of the build, and stamps the commit into `Info.plist` as `AIMeterBarCommit` (`-dirty` when it warned). It signs with `AI Meter Bar Local Signing` when `make-signing-identity.sh` made it, otherwise ad-hoc.
 
 ## Behavior worth knowing
 
 **Portal**
+- **Cycle.** `SignInCycle` owns the checks, the poll timer and the pause after a rejection; `AppDelegate` only forwards network, sleep and wake events. Tests drive it with a fake portal.
+- **Pace.** Checks run at the chosen interval while signed out and every 30 s once connected (never faster than the setting). A network change or wake checks at once.
+- **Setup.** With no username, or neither a Login URL nor a marker, a login page is offered for setup and no password is read or sent. **Detect** follows the probe to the page, fills the Login URL with where its form posts and, for a redirected name, the marker. It never reads the Keychain and saves nothing until **Save**.
 - **Gates.** The page must hold a login form, or the Portal marker when one is set. A form must post to the Login URL's scheme, host and port, or upgrade it to https. Without a Login URL, it goes only to the Wi-Fi gateway after the marker matches.
 - **Origin.** A page is judged by the addresses its connection used: one served by this Mac is ignored, and one that did not arrive over Wi-Fi (a VPN, another link) is not signed in to. A body stops at 1 MB while it downloads.
 - **Marker.** Use text only your portal's page shows. A value found in the app's own addresses, such as the Apple probe URL or `<gateway>/login`, is ignored, and **Diagnose** says so.
@@ -51,6 +55,9 @@ Developer notes. See the [main README](../README.md) for what the app does.
 
 **Interface**
 - **Panel grid.** `UI` holds the tile, row and action sizes, so columns line up from the header to Recent Sessions.
+- **Settings.** A compact 470 pt window with small controls and 30 pt rows (`SettingsUI`); it fits the shown tab's height.
+- **Tool rows.** The action column opens the tool's app when it is installed, named after the app that opens (Copilot opens VS Code).
+- **Notifications.** Off by default. Turning them on asks macOS once. Each kind alerts once: a sign-in that needs the settings, a VPN that went down without the panel's Stop, a shown quota at 10% or less until it resets.
 - **Meters.** One update interval drives speed, CPU and RAM; in Low Power Mode it is 5 s. Redrawing the menu bar item is the app's main steady cost, so the interval is the lever.
 - **Refresh.** Profile and VPN rows update in place, and tool rows are rebuilt only when their content changed; the refresh button is a spinner while a read runs. Settings and Usage History are released when closed.
 - **Move to Trash.** Never Default or a running profile, and only a launcher this app built goes with it.

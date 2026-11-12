@@ -115,9 +115,10 @@ final class ClosureButton: NSButton {
         if primary { keyEquivalent = "\r" }
     }
 
-    convenience init(symbol: String, label: String, tint: NSColor = .secondaryLabelColor, onClick: (() -> Void)? = nil) {
+    convenience init(symbol: String, label: String, tint: NSColor = .secondaryLabelColor, size: CGFloat = UI.actionWidth,
+                     onClick: (() -> Void)? = nil) {
         self.init(frame: .zero)
-        image = UI.symbol(symbol, description: label)
+        image = UI.symbol(symbol, size: size < UI.actionWidth ? 12 : 13, description: label)
         imagePosition = .imageOnly
         isBordered = false
         contentTintColor = tint
@@ -126,7 +127,7 @@ final class ClosureButton: NSButton {
         self.onClick = onClick
         target = self
         action = #selector(fire)
-        UI.fix(self, width: UI.actionWidth, height: UI.actionWidth)
+        UI.fix(self, width: size, height: size)
     }
 
     @objc private func fire() {
@@ -139,7 +140,10 @@ final class CardView: NSView {
     // Set when the card acts as one button, so its text and padding take the click too.
     var clickTarget: NSButton?
 
-    init(_ content: NSView, padding: CGFloat = UI.cardPadding) {
+    private let radius: CGFloat
+
+    init(_ content: NSView, padding: CGFloat = UI.cardPadding, radius: CGFloat = 18) {
+        self.radius = radius
         super.init(frame: .zero)
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
@@ -170,7 +174,7 @@ final class CardView: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.cornerRadius = 18
+        layer?.cornerRadius = radius
         layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor
     }
 }
@@ -269,22 +273,27 @@ final class StatusDot: NSView {
 }
 
 final class TileView: NSImageView {
-    init(letter: String, hex: String) {
+    private let side: CGFloat
+
+    init(letter: String, hex: String, size: CGFloat = UI.tileSize) {
+        side = size
         super.init(frame: .zero)
-        configure(Monogram.image(letter: letter, hex: hex, size: UI.tileSize))
+        configure(Monogram.image(letter: letter, hex: hex, size: size))
     }
 
-    init(mark: ProviderMark) {
+    init(mark: ProviderMark, size: CGFloat = UI.tileSize) {
+        side = size
         super.init(frame: .zero)
-        configure(mark.tile(size: UI.tileSize))
+        configure(mark.tile(size: size))
     }
 
-    init(symbol: String, hex: String) {
+    init(symbol: String, hex: String, size: CGFloat = UI.tileSize) {
+        side = size
         super.init(frame: .zero)
-        // One configuration, so the white palette keeps the 15 pt semibold size.
-        let style = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold).applying(.init(paletteColors: [.white]))
+        // One configuration, so the white palette keeps the semibold size.
+        let style = NSImage.SymbolConfiguration(pointSize: size / 2, weight: .semibold).applying(.init(paletteColors: [.white]))
         let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(style)
-        configure(NSImage(size: NSSize(width: UI.tileSize, height: UI.tileSize), flipped: false) { rect in
+        configure(NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             UI.color(hex: hex).setFill()
             NSBezierPath(roundedRect: rect, xRadius: rect.width * 0.3, yRadius: rect.height * 0.3).fill()
             if let glyph = glyph {
@@ -298,13 +307,13 @@ final class TileView: NSImageView {
     required init?(coder: NSCoder) { nil }
 
     func set(letter: String, hex: String) {
-        image = Monogram.image(letter: letter, hex: hex, size: UI.tileSize)
+        image = Monogram.image(letter: letter, hex: hex, size: side)
     }
 
     private func configure(_ tile: NSImage) {
         image = tile
         imageScaling = .scaleNone
         setAccessibilityElement(false)
-        UI.fix(self, width: UI.tileSize, height: UI.tileSize)
+        UI.fix(self, width: side, height: side)
     }
 }
