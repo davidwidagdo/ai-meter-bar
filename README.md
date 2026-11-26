@@ -82,6 +82,26 @@ open "/Applications/AI Meter Bar.app"
 | `macos-app/make-signing-identity.sh` | Run once: a local signing identity, so rebuilds stop asking for Keychain access; asks for your password |
 | `discover-portal.sh` | Shows a portal's login form when **Detect** cannot read it; copy `config.example` to `config` first |
 
+## Releases
+
+Versions follow [Semantic Versioning](https://semver.org) as `vMAJOR.MINOR.PATCH`: one git tag and one GitHub Release
+per version, cut from `main`. The version lives in `macos-app/Info.plist`, and the release PR bumps it as its last
+commit.
+
+- **PATCH** (`2.0.0` to `2.0.1`): bug fixes, performance, text or style polish.
+- **MINOR** (`2.0.1` to `2.1.0`): a new tool row, panel card, setting or integration; existing settings keep working.
+- **MAJOR** (`2.1.0` to `3.0.0`): you must act to upgrade, such as a removed feature, a sign-in or setting to enter
+  again, or a new system permission.
+- Docs and test-only changes ship with the next release.
+
+```mermaid
+flowchart LR
+  B["Release PR: chore(release): bump version"] --> C["Unit tests and build pass"] --> M["Merge into main"] --> T["Tag vX.Y.Z and publish the GitHub Release"]
+```
+
+Build and install from the tagged commit, so the app's version and commit stamp match the release. Release notes list
+what's new, fixes, upgrade notes when you must act, the pull requests, and the full changelog link.
+
 ## Security and privacy
 
 - The portal password lives only in the Keychain, and goes only to the Login URL's address, or to the Wi-Fi gateway once your portal marker matches.
